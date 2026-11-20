@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Mapping, Protocol
 from urllib.parse import quote
+from uuid import uuid4
 
 from .history import InvalidReadings, Reading, parse_readings
 
@@ -28,6 +29,10 @@ class ContractError(PortalError):
 
 class ProtocolError(PortalError):
     """The response did not match the supported portal protocol."""
+
+
+class LoginProtocolError(ProtocolError):
+    """The login endpoint returned an unsupported response."""
 
 
 class TemporaryError(PortalError):
@@ -83,22 +88,28 @@ def _check_status(response: Response) -> None:
     if status in (408, 429) or 500 <= status < 600:
         headers = {k.lower(): v for k, v in response.headers.items()}
         raise TemporaryError("Portal temporarily unavailable", _retry_after(headers.get("retry-after")))
-    raise ProtocolError("Unexpected portal HTTP status")
+    raise ProtocolError(f"Unexpected portal HTTP status {status}")
+
+
+def _valid_header(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and value.isascii() and value.isprintable()
 
 
 def _session_headers(response: Response) -> dict[str, str]:
-    """Read server-issued fields from headers or the root JSON object."""
+    """Read the session token and any conversation ID supplied by the portal."""
     fields = {k.lower(): v for k, v in response.headers.items()}
     if isinstance(response.body, dict):
         for key, value in response.body.items():
             fields.setdefault(key.lower(), value)
 
-    result = {}
-    for name in ("Token", "ConversationId"):
-        value = fields.get(name.lower())
-        if not isinstance(value, str) or not value.strip() or not value.isprintable():
-            raise ProtocolError("Missing or invalid login session fields")
-        result[name] = value
+    token = fields.get("tokenauthentique") or fields.get("token")
+    if not _valid_header(token):
+        raise LoginProtocolError(f"Login response has no usable session token (HTTP {response.status})")
+
+    result = {"Token": token}
+    conversation_id = fields.get("conversationid")
+    if _valid_header(conversation_id):
+        result["ConversationId"] = conversation_id
     return result
 
 
@@ -117,12 +128,22 @@ class MontpellierClient:
         response = await self._transport.request(
             "POST",
             LOGIN,
+            headers={"ConversationId": str(uuid4())},
             json={"identifiant": self._username, "motDePasse": self._password},
         )
         if response.status in (401, 403):
             raise InvalidAuth("Portal login rejected")
-        _check_status(response)
+        try:
+            _check_status(response)
+        except ProtocolError as err:
+            raise LoginProtocolError(str(err)) from None
         self._session_headers = _session_headers(response)
+
+    async def _read(self, path: str) -> Response:
+        assert self._session_headers is not None
+        headers = dict(self._session_headers)
+        headers.setdefault("ConversationId", str(uuid4()))
+        return await self._transport.request("GET", path, headers=headers)
 
     async def fetch_readings(self, contract: str) -> tuple[Reading, ...]:
         """Read the supplied subscription under the subscriber's session."""
@@ -130,10 +151,10 @@ class MontpellierClient:
             await self._login()
 
         path = CONSUMPTION + quote(contract, safe="")
-        response = await self._transport.request("GET", path, headers=self._session_headers)
+        response = await self._read(path)
         if response.status in (401, 403):
             await self._login()
-            response = await self._transport.request("GET", path, headers=self._session_headers)
+            response = await self._read(path)
         if response.status in (400, 403, 404):
             raise ContractError("Portal did not return this subscription")
         if response.status == 401:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from hashlib import sha256
 from typing import Any
@@ -20,10 +21,18 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .api import ContractError, InvalidAuth, MontpellierClient, ProtocolError, TemporaryError
+from .api import (
+    ContractError,
+    InvalidAuth,
+    LoginProtocolError,
+    MontpellierClient,
+    ProtocolError,
+    TemporaryError,
+)
 from .const import CONF_ALERT_THRESHOLD, CONF_CONTRACT, DEFAULT_ALERT_THRESHOLD, DOMAIN, NAME
 from .http import PortalTransport
 
+_LOGGER = logging.getLogger(__name__)
 _CONTRACT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
@@ -54,7 +63,11 @@ class WaterConfigFlow(ConfigFlow, domain=DOMAIN):
             return "invalid_contract"
         except TemporaryError:
             return "cannot_connect"
-        except ProtocolError:
+        except LoginProtocolError as err:
+            _LOGGER.warning("Portal login validation failed: %s", err)
+            return "unexpected_login_response"
+        except ProtocolError as err:
+            _LOGGER.warning("Portal readings validation failed: %s", err)
             return "unexpected_response"
         finally:
             transport.close()

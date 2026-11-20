@@ -4,12 +4,14 @@ from collections import deque
 from json import loads
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
+from uuid import UUID
 
 from custom_components.regie_eaux_montpellier.api import (
     CONSUMPTION,
     LOGIN,
     ContractError,
     InvalidAuth,
+    LoginProtocolError,
     MontpellierClient,
     ProtocolError,
     Response,
@@ -52,12 +54,28 @@ class PortalClientTest(IsolatedAsyncioTestCase):
         readings_two = await client.fetch_readings("TEST")
         self.assertEqual(readings_one, readings_two)
         self.assertEqual(transport.cleared, 1)
-        self.assertEqual(transport.calls[0], (
-            "POST", LOGIN, None, {"identifiant": "subscriber", "motDePasse": "secret-example"}
-        ))
+        method, path, headers, body = transport.calls[0]
+        self.assertEqual((method, path), ("POST", LOGIN))
+        self.assertEqual(body, {"identifiant": "subscriber", "motDePasse": "secret-example"})
+        self.assertEqual(UUID(headers["ConversationId"]).version, 4)
         for method, path, headers, body in transport.calls[1:]:
             self.assertEqual((method, path, body), ("GET", CONSUMPTION + "TEST", None))
             self.assertEqual(headers, {"Token": "session-one", "ConversationId": "conversation-test"})
+
+    async def test_session_token_in_json_without_a_conversation_header(self):
+        transport = FakeTransport(
+            Response(200, {"Token": "temporary"}, {"tokenAuthentique": "session-json"}),
+            readings(),
+            readings(),
+        )
+        client = MontpellierClient(transport, "a", "b")
+        await client.fetch_readings("TEST")
+        await client.fetch_readings("TEST")
+        headers = [call[2] for call in transport.calls]
+        conversations = [header["ConversationId"] for header in headers]
+        self.assertEqual(len(set(conversations)), 3)
+        self.assertTrue(all(UUID(cid).version == 4 for cid in conversations))
+        self.assertEqual([h["Token"] for h in headers[1:]], ["session-json"] * 2)
 
     async def test_expired_session_is_renewed_once(self):
         for status in (401, 403):
@@ -98,8 +116,9 @@ class PortalClientTest(IsolatedAsyncioTestCase):
 
     async def test_unknown_200_login_response_is_a_protocol_error(self):
         transport = FakeTransport(Response(200, {}, {"debug": "sensitive payload"}))
-        with self.assertRaises(ProtocolError) as raised:
+        with self.assertRaises(LoginProtocolError) as raised:
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+        self.assertIn("HTTP 200", str(raised.exception))
         self.assertNotIn("sensitive", str(raised.exception))
         self.assertEqual(len(transport.calls), 1)
 
