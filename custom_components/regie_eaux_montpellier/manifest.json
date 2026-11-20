@@ -8,5 +8,5 @@
   "integration_type": "device",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/MisteurZZ/regie-eaux-montpellier/issues",
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

@@ -24,7 +24,7 @@ class PortalTransport:
             auto_cleanup=False,
             cookie_jar=CookieJar(),
             timeout=ClientTimeout(total=20),
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json, text/plain, */*"},
         )
 
     def clear_cookies(self) -> None:

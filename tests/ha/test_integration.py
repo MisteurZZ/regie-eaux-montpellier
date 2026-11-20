@@ -34,8 +34,10 @@ def portal():
 
     async def request(self, method, path, *, headers=None, json=None, read_text=False):
         if (method, path) == ("GET", "/"):
+            assert headers["Accept"].startswith("text/html")
             return Response(200, {}, None)
         if (method, path) == ("GET", PORTAL_APP):
+            assert headers["Accept"] == "*/*"
             assert read_text
             return Response(200, {}, script)
         if (method, path) == ("POST", GENERATE_TOKEN):

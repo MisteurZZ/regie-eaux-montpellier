@@ -76,8 +76,8 @@ class PortalClientTest(IsolatedAsyncioTestCase):
         self.assertEqual(transport.cleared, 1)
         self.assertEqual(transport.cookie_tokens, ["session-one"])
         self.assertEqual(transport.calls[:2], [
-            ("GET", "/", None, None, False),
-            ("GET", PORTAL_APP, {"Cache-Control": "no-cache"}, None, True),
+            ("GET", "/", {"Accept": "text/html, */*;q=0.8"}, None, False),
+            ("GET", PORTAL_APP, {"Accept": "*/*", "Cache-Control": "no-cache"}, None, True),
         ])
         method, path, headers, body, _ = transport.calls[2]
         self.assertEqual((method, path), ("POST", GENERATE_TOKEN))
@@ -166,6 +166,20 @@ class PortalClientTest(IsolatedAsyncioTestCase):
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertEqual(raised.exception.retry_after, 1800)
         self.assertEqual(len(transport.calls), 5)
+
+    async def test_bootstrap_406_identifies_the_rejected_step(self):
+        stages = ("Portal landing page", "Public portal script", "Anonymous token request")
+        for index, stage in enumerate(stages):
+            with self.subTest(stage=stage):
+                transport = FakeTransport(
+                    *bootstrap()[:index],
+                    Response(406, {}, {"detail": "private portal response"}),
+                )
+                with self.assertRaises(LoginProtocolError) as raised:
+                    await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+                self.assertIn(f"{stage} returned HTTP 406", str(raised.exception))
+                self.assertNotIn("private portal response", str(raised.exception))
+                self.assertNotIn(LOGIN, [call[1] for call in transport.calls])
 
     async def test_http_date_retry_after(self):
         transport = FakeTransport(

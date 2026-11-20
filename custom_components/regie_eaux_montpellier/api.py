@@ -96,14 +96,17 @@ def _retry_after(header: str | None) -> float | None:
     return None
 
 
-def _check_status(response: Response) -> None:
+def _check_status(response: Response, *, step: str) -> None:
     status = response.status
     if 200 <= status < 300:
         return
     if status in (408, 429) or 500 <= status < 600:
         headers = {k.lower(): v for k, v in response.headers.items()}
-        raise TemporaryError("Portal temporarily unavailable", _retry_after(headers.get("retry-after")))
-    raise ProtocolError(f"Unexpected portal HTTP status {status}")
+        raise TemporaryError(
+            f"{step} temporarily unavailable (HTTP {status})",
+            _retry_after(headers.get("retry-after")),
+        )
+    raise ProtocolError(f"{step} returned HTTP {status}")
 
 
 def _valid_header(value: object) -> TypeGuard[str]:
@@ -159,13 +162,19 @@ class MontpellierClient:
     async def _request_open_token(self) -> str:
         """Acquire an anonymous token using the same public app configuration."""
         try:
-            _check_status(await self._transport.request("GET", "/"))
+            landing = await self._transport.request(
+                "GET", "/", headers={"Accept": "text/html, */*;q=0.8"}
+            )
+            _check_status(landing, step="Portal landing page")
 
             if self._application is None:
                 script = await self._transport.request(
-                    "GET", PORTAL_APP, headers={"Cache-Control": "no-cache"}, read_text=True
+                    "GET",
+                    PORTAL_APP,
+                    headers={"Accept": "*/*", "Cache-Control": "no-cache"},
+                    read_text=True,
                 )
-                _check_status(script)
+                _check_status(script, step="Public portal script")
                 self._application = _application_fields(script.body)
 
             client_id, access_key = self._application
@@ -186,7 +195,7 @@ class MontpellierClient:
             )
             if response.status in (401, 403):
                 self._application = None
-            _check_status(response)
+            _check_status(response, step="Anonymous token request")
             token = response.body.get("token") if isinstance(response.body, dict) else None
             if not _valid_header(token):
                 raise ProtocolError("Anonymous token response has no usable token")
@@ -217,7 +226,7 @@ class MontpellierClient:
         if response.status in (401, 403):
             raise InvalidAuth("Portal login rejected")
         try:
-            _check_status(response)
+            _check_status(response, step="Subscriber login")
         except ProtocolError as err:
             raise LoginProtocolError(str(err)) from None
         if isinstance(response.body, dict) and response.body.get("isMFA") is True:
@@ -248,7 +257,7 @@ class MontpellierClient:
             self._token = None
             raise ProtocolError("Portal rejected the renewed session")
 
-        _check_status(response)
+        _check_status(response, step="Meter readings request")
         try:
             return parse_readings(response.body, contract)
         except InvalidReadings as err:
