@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from json import JSONDecodeError, loads
+from json import JSONDecodeError, dumps, loads
 from typing import TYPE_CHECKING, Mapping, Protocol
 from urllib.parse import quote
 from uuid import uuid4
@@ -17,6 +17,8 @@ from .history import InvalidReadings, Reading, parse_readings
 if TYPE_CHECKING:
     from typing import TypeGuard
 
+API_ACCEPT = "application/json, text/plain, */*"
+JSON_CONTENT_TYPE = "application/json;charset=utf-8"
 PORTAL_APP = "/app/app.js"
 GENERATE_TOKEN = "/webapi/Acces/generateToken"
 LOGIN = "/webapi/Utilisateur/authentification"
@@ -82,6 +84,19 @@ class Transport(Protocol):
     ) -> Response: ...
 
 
+def encode_json(payload: dict[str, str]) -> bytes:
+    """Encode an API request using the portal's compact UTF-8 JSON format."""
+    return dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def decode_body(payload: bytes, *, read_text: bool) -> object:
+    """Read a public asset or parse a portal API response."""
+    try:
+        return payload.decode("utf-8") if read_text else loads(payload)
+    except (JSONDecodeError, UnicodeError):
+        return None
+
+
 def _retry_after(header: str | None) -> float | None:
     if not header:
         return None
@@ -142,6 +157,26 @@ def _session_token(response: Response) -> str:
         raise LoginProtocolError(f"Login response has no usable session token (HTTP {response.status})")
 
     return token
+
+
+def _bad_login_response(body: object) -> str:
+    """Describe a rejected login without exposing values from the server."""
+    description = "Subscriber login returned HTTP 400"
+    if not isinstance(body, dict):
+        return f"{description} (response without a JSON object)"
+
+    details = []
+    code = body.get("aelCode")
+    if type(code) is int:
+        code = str(code)
+    if isinstance(code, str) and re.fullmatch(r"[A-Z]{0,2}[0-9]{1,4}", code):
+        details.append(f"portal code {code}")
+    errors = body.get("errors")
+    if isinstance(errors, dict):
+        fields = {key.lower().removeprefix("$.") for key in errors}
+        if rejected := fields.intersection({"identifiant", "motdepasse"}):
+            details.append("fields " + ", ".join(sorted(rejected)))
+    return f"{description} ({'; '.join(details) if details else 'JSON response'})"
 
 
 def _conversation_id() -> str:
@@ -225,6 +260,8 @@ class MontpellierClient:
             response = await self._request_login()
         if response.status in (401, 403):
             raise InvalidAuth("Portal login rejected")
+        if response.status == 400:
+            raise LoginProtocolError(_bad_login_response(response.body))
         try:
             _check_status(response, step="Subscriber login")
         except ProtocolError as err:

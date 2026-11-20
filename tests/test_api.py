@@ -19,6 +19,8 @@ from custom_components.regie_eaux_montpellier.api import (
     ProtocolError,
     Response,
     TemporaryError,
+    decode_body,
+    encode_json,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -188,6 +190,25 @@ class PortalClientTest(IsolatedAsyncioTestCase):
         with self.assertRaises(TemporaryError) as raised:
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertGreater(raised.exception.retry_after, 0)
+
+    async def test_bad_login_response_logs_only_validation_metadata(self):
+        body = {
+            "aelCode": "U12",
+            "message": "private portal response",
+            "errors": {"$.identifiant": ["secret"], "private-field": ["other secret"]},
+        }
+        transport = FakeTransport(*bootstrap(), Response(400, {}, body))
+        with self.assertRaisesRegex(
+            LoginProtocolError, r"^Subscriber login returned HTTP 400 \(portal code U12; fields identifiant\)$"
+        ):
+            await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+
+    async def test_login_payload_is_compact_utf8_json(self):
+        payload = {"identifiant": "test", "motDePasse": "été-pass"}
+        encoded = encode_json(payload)
+        self.assertEqual(encoded.decode("utf-8"), '{"identifiant":"test","motDePasse":"été-pass"}')
+        self.assertEqual(decode_body(encoded, read_text=False), payload)
+        self.assertIsNone(decode_body(b"<html>Bad request</html>", read_text=False))
 
     async def test_unknown_200_login_response_is_a_protocol_error(self):
         transport = FakeTransport(

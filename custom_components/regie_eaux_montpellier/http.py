@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from http.cookies import SimpleCookie
-from json import JSONDecodeError
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, CookieJar
 from yarl import URL
@@ -11,7 +10,15 @@ from yarl import URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
-from .api import Response, TemporaryError
+from .api import (
+    API_ACCEPT,
+    JSON_CONTENT_TYPE,
+    LOGIN,
+    Response,
+    TemporaryError,
+    decode_body,
+    encode_json,
+)
 from .const import BASE_URL
 
 
@@ -24,7 +31,7 @@ class PortalTransport:
             auto_cleanup=False,
             cookie_jar=CookieJar(),
             timeout=ClientTimeout(total=20),
-            headers={"Accept": "application/json, text/plain, */*"},
+            headers={"Accept": API_ACCEPT},
         )
 
     def clear_cookies(self) -> None:
@@ -53,20 +60,17 @@ class PortalTransport:
         read_text: bool = False,
     ) -> Response:
         """Send a bounded request without following redirects."""
+        data = None
+        if json is not None:
+            headers = {**(headers or {}), "Content-Type": JSON_CONTENT_TYPE}
+            data = encode_json(json)
         try:
             async with self._session.request(
-                method, BASE_URL + path, headers=headers, json=json, allow_redirects=False
+                method, BASE_URL + path, headers=headers, data=data, allow_redirects=False
             ) as response:
                 body = None
-                if 200 <= response.status < 300:
-                    try:
-                        body = (
-                            await response.text(encoding="utf-8")
-                            if read_text
-                            else await response.json(content_type=None)
-                        )
-                    except (JSONDecodeError, UnicodeError):
-                        pass
+                if 200 <= response.status < 300 or (path == LOGIN and response.status == 400):
+                    body = decode_body(await response.read(), read_text=read_text)
                 return Response(response.status, dict(response.headers), body)
         except (ClientError, TimeoutError):
             raise TemporaryError("Portal connection failed") from None

@@ -84,6 +84,8 @@ Les tests du client et de l’historique s’exécutent sans dépendance Home As
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+Pour tester la connexion à un compte de la Régie depuis un Mac sans réinstaller Home Assistant, lancez `python3 -m tools.check_portal` depuis la racine du dépôt avec Python 3.9 ou ultérieur. Le terminal masque la saisie des identifiants et du contrat. Le résultat affiche le nombre de relevés ou le détail non sensible de l’erreur. Ce contrôle utilise le même client et le transport HTTPS de Python.
+
 Pour exécuter aussi les tests du Config Flow, des entités et du Recorder, utilisez un environnement de test isolé avec Python 3.14.2 ou ultérieur.
 
 ```sh
