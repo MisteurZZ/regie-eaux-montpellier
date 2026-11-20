@@ -2,7 +2,7 @@
 
 Intégration personnalisée pour le portail abonnés de la Régie des eaux de Montpellier Méditerranée Métropole. Elle récupère les relevés du compteur d’eau et importe les volumes à leur date de mesure dans le tableau de bord Énergie. Elle est configurée depuis l’interface de Home Assistant et s’exécute sur Home Assistant OS sans navigateur.
 
-**Version 0.1.2 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La connexion suit la séquence du portail de Montpellier et reste à essayer depuis Home Assistant avec un compte réel. La cible est Home Assistant OS avec Core 2026.11.x.
+**Version 0.1.3 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La commande de vérification sur Mac a confirmé la connexion et la récupération de relevés sur un compte réel. La validation depuis Home Assistant reste à faire. La cible est Home Assistant OS avec Core 2026.11.x.
 
 ## Installation manuelle sur Home Assistant Green
 
