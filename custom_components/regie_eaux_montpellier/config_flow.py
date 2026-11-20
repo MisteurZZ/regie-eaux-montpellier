@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -13,6 +14,8 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
+    DateSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -20,6 +23,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.util import dt as dt_util
 
 from .api import (
     ContractError,
@@ -30,10 +34,31 @@ from .api import (
     ProtocolError,
     TemporaryError,
 )
-from .const import CONF_ALERT_THRESHOLD, CONF_CONTRACT, DEFAULT_ALERT_THRESHOLD, DOMAIN, NAME
+from .const import (
+    CONF_ALERT_THRESHOLD,
+    CONF_CONTRACT,
+    CONF_COST_ENABLED,
+    CONF_TARIFFS,
+    DEFAULT_ALERT_THRESHOLD,
+    DOMAIN,
+    NAME,
+)
+from .history import PARIS
 from .http import PortalTransport
+from .tariffs import (
+    DEFAULT_PRICE_PER_M3,
+    InvalidPrice,
+    RetroactiveTariff,
+    Tariff,
+    decode_tariffs,
+    encode_tariffs,
+    parse_price,
+    set_estimated_tariff,
+)
 
 _LOGGER = logging.getLogger(__name__)
+_PRICE_FIELD = "price_per_m3"
+_EFFECTIVE_DATE_FIELD = "tariff_effective_from"
 _CONTRACT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
@@ -140,30 +165,87 @@ class WaterConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Return the per-contract alert options."""
+        """Return the per-contract alert and cost options."""
         return WaterOptionsFlow()
 
 
 class WaterOptionsFlow(OptionsFlow):
-    """Configure the alert threshold in litres."""
+    """Configure alerts and the optional dated price estimate."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Store a threshold, or disable alerts with zero."""
-        if user_input is not None:
-            return self.async_create_entry(
-                data={CONF_ALERT_THRESHOLD: int(user_input[CONF_ALERT_THRESHOLD])}
-            )
+        """Save cost options without reloading the integration or the portal."""
+        entry = self.config_entry
+        options = entry.options
+        tariffs = decode_tariffs(options.get(CONF_TARIFFS, []))
+        today = dt_util.utcnow().astimezone(PARIS).date()
+        errors = {}
 
-        threshold = self.config_entry.options.get(CONF_ALERT_THRESHOLD, DEFAULT_ALERT_THRESHOLD)
+        if user_input is not None:
+            updated = {
+                **options,
+                CONF_ALERT_THRESHOLD: int(user_input[CONF_ALERT_THRESHOLD]),
+                CONF_COST_ENABLED: user_input[CONF_COST_ENABLED],
+            }
+            if not updated[CONF_COST_ENABLED]:
+                return self.async_create_entry(data=updated)
+
+            try:
+                price = parse_price(user_input[_PRICE_FIELD])
+            except InvalidPrice:
+                errors[_PRICE_FIELD] = "invalid_price"
+            try:
+                effective_from = date.fromisoformat(user_input[_EFFECTIVE_DATE_FIELD])
+            except (ValueError, TypeError):
+                errors[_EFFECTIVE_DATE_FIELD] = "invalid_tariff_date"
+
+            if not errors:
+                try:
+                    tariffs = set_estimated_tariff(tariffs, Tariff(effective_from, price), today)
+                except RetroactiveTariff:
+                    errors[_EFFECTIVE_DATE_FIELD] = "retroactive_tariff"
+                else:
+                    updated[CONF_TARIFFS] = encode_tariffs(tariffs)
+                    return self.async_create_entry(data=updated)
+
+        if tariffs:
+            price = tariffs[-1].price_per_m3
+            effective_from = max(tariffs[-1].effective_from, today + timedelta(days=1))
+        else:
+            price = DEFAULT_PRICE_PER_M3
+            coordinator = getattr(entry, "runtime_data", None)
+            effective_from = getattr(coordinator, "first_volume_day", None) or today
+
+        defaults = {
+            CONF_ALERT_THRESHOLD: options.get(CONF_ALERT_THRESHOLD, DEFAULT_ALERT_THRESHOLD),
+            CONF_COST_ENABLED: options.get(CONF_COST_ENABLED, False),
+            _PRICE_FIELD: float(price),
+            _EFFECTIVE_DATE_FIELD: effective_from.isoformat(),
+            **(user_input or {}),
+        }
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ALERT_THRESHOLD, default=threshold): NumberSelector(
-                        NumberSelectorConfig(min=0, step=1, mode=NumberSelectorMode.BOX)
+                    vol.Required(
+                        CONF_ALERT_THRESHOLD, default=defaults[CONF_ALERT_THRESHOLD]
+                    ): NumberSelector(NumberSelectorConfig(min=0, step=1, mode=NumberSelectorMode.BOX)),
+                    vol.Required(
+                        CONF_COST_ENABLED, default=defaults[CONF_COST_ENABLED]
+                    ): BooleanSelector(),
+                    vol.Required(_PRICE_FIELD, default=defaults[_PRICE_FIELD]): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            step=0.0001,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="€/m³",
+                        )
                     ),
+                    vol.Required(
+                        _EFFECTIVE_DATE_FIELD, default=defaults[_EFFECTIVE_DATE_FIELD]
+                    ): DateSelector(),
                 }
             ),
+            errors=errors,
         )

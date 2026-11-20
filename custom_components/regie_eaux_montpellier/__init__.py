@@ -36,5 +36,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> bo
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: WaterConfigEntry) -> None:
-    """Apply new alert options without requesting another portal update."""
+    """Apply alert and cost options using the cached readings."""
+    entry.runtime_data.async_publish_costs()
     entry.runtime_data.async_update_listeners()

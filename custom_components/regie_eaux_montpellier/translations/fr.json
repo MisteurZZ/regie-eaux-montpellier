@@ -37,12 +37,20 @@
   "options": {
     "step": {
       "init": {
-        "title": "Alerte de consommation",
-        "description": "L’alerte se déclenche si le volume du dernier relevé dépasse ce seuil. Saisissez 0 pour la désactiver.",
+        "title": "Alertes et coût de l’eau",
+        "description": "Saisissez 0 L pour désactiver l’alerte de consommation. Le coût estimé couvre la part variable TTC. Le premier tarif s’applique à partir de la date choisie. Pour changer le montant, choisissez une date future.",
         "data": {
-          "alert_threshold": "Seuil d’alerte (L)"
+          "alert_threshold": "Seuil d’alerte (L)",
+          "cost_enabled": "Activer le coût estimé",
+          "price_per_m3": "Tarif variable TTC",
+          "tariff_effective_from": "Date d’entrée en vigueur du tarif"
         }
       }
+    },
+    "error": {
+      "invalid_price": "Saisissez un prix positif ou nul avec au plus quatre décimales.",
+      "invalid_tariff_date": "Saisissez une date valide.",
+      "retroactive_tariff": "Choisissez une date à partir de demain pour modifier un tarif."
     }
   },
   "entity": {

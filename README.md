@@ -2,7 +2,7 @@
 
 Intégration personnalisée pour le portail abonnés de la Régie des eaux de Montpellier Méditerranée Métropole. Elle récupère les relevés du compteur d’eau et importe les volumes à leur date de mesure dans le tableau de bord Énergie. Elle est configurée depuis l’interface de Home Assistant et s’exécute sur Home Assistant OS sans navigateur.
 
-**Version 0.1.5.** L’intégration ajoute une icône de compteur d’eau à la fiche Home Assistant. Sur un compte réel, la connexion et la récupération des relevés ont été vérifiées sur un Home Assistant Green avec Core 2026.11.x. Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier.
+**Version 0.1.6.** L’intégration permet d’ajouter le coût estimé de l’eau au tableau de bord Énergie. La connexion et la récupération des relevés ont été vérifiées sur un compte réel avec une version précédente sur Home Assistant Green et Core 2026.11.x.
 
 ## Installation manuelle sur Home Assistant Green
 
@@ -48,6 +48,16 @@ Le Recorder reçoit des cumuls absolus en m³, indexés par heure de mesure en U
 
 Les relevés reçus tardivement reviennent à leur date de mesure. Les nouveaux volumes et les corrections explicites à un horodatage existant recalculent les cumuls affectés. Une nouvelle importation remplace les points existants à ces heures, ce qui évite les doublons. L’historique est conservé dans le stockage interne de l’intégration à travers les redémarrages et les réponses incomplètes. Un jour manquant reste sans relevé et sans estimation. Si une ligne déjà connue perd son champ volume dans une réponse suivante, le dernier volume publié est conservé. Une correction qui change l’horodatage d’une ligne exige un identifiant de relevé stable ou une règle de remplacement à vérifier auprès du portail.
 
+### Coût estimé de l’eau
+
+1. Dans **Paramètres → Appareils et services → Régie des eaux Montpellier → Configurer**, activez **Coût estimé** pour votre contrat. Le tarif proposé est **3,6078 €/m³ TTC**. Choisissez la date de départ de l’estimation. Par défaut, le formulaire propose la date du plus ancien relevé qui comporte un volume.
+2. Dans la configuration du tableau de bord **Énergie**, ouvrez votre source d’eau existante puis sélectionnez **Utiliser une entité de suivi des coûts totaux**. Choisissez **Régie des eaux Montpellier · Coût estimé**, avec le même suffixe que votre source d’eau. La source de coût apparaît dès qu’un relevé porte un volume à partir de la date de départ choisie.
+3. Pour modifier le prix, saisissez le nouveau tarif et sa date d’entrée en vigueur dans les options. Choisissez une date future, au plus tôt le lendemain en heure de Paris. Un relevé publié en retard est valorisé au tarif de sa date de mesure. Une correction de volume recalcule les cumuls au tarif applicable à cette même date.
+
+Le tarif par défaut est une moyenne issue de la facture du 20 octobre 2026 (230,90 € TTC de consommation pour 64 m³). Il couvre l’eau potable, l’assainissement et les taxes. L’abonnement fixe de 9,50 € TTC par semestre est exclu. Le tarif marginal peut varier selon les tranches de facturation. Avec le tarif moyen, les 1,372 m³ de l’exemple ci-dessous correspondent à **4,95 €** arrondis au centime.
+
+La désactivation suspend les nouveaux imports de coûts. Les statistiques déjà enregistrées et les tarifs sont conservés. Retirez la source de coût du tableau de bord si vous souhaitez masquer les montants. La réactivation reprend l’historique disponible avec les dates et tarifs enregistrés.
+
 ### Résultat de référence
 
 | Date de mesure | Index | Volume |
@@ -74,11 +84,12 @@ Le client lit les paramètres de l’application publiés dans `/app/app.js` sur
 1. Vérifiez que Home Assistant charge les relevés de votre contrat après la saisie des identifiants. Si le formulaire affiche une erreur, relevez uniquement le message affiché et les lignes de journal commençant par `Portal login validation failed` ou `Portal readings validation failed`.
 2. Comparez le dernier index et le dernier volume à l’agence en ligne, puis vérifiez le bouton d’actualisation. Après une expiration réelle, vérifiez que la synchronisation suivante renouvelle la session.
 3. Dans Énergie, comparez plusieurs dates disponibles. Relancez une synchronisation et redémarrez Home Assistant. Vérifiez que la source reste la même, que les jours gardent leur consommation et que le cumul reste exact.
-4. Sur un contrat plus ancien, vérifiez le nombre de résultats et la profondeur de l’historique. Si `nbTotalResultats` dépasse le nombre de lignes retournées, identifiez les paramètres de pagination utilisés par le portail. Vérifiez aussi le traitement des corrections et des intervalles couvrant plusieurs jours.
+4. Si le coût estimé est activé, comparez le montant affiché dans Énergie au volume couvert multiplié par le tarif en vigueur aux dates de mesure. Choisissez une période couverte par un seul tarif pour le premier contrôle.
+5. Sur un contrat plus ancien, vérifiez le nombre de résultats et la profondeur de l’historique. Si `nbTotalResultats` dépasse le nombre de lignes retournées, identifiez les paramètres de pagination utilisés par le portail. Vérifiez aussi le traitement des corrections et des intervalles couvrant plusieurs jours.
 
 ## Développement et licence
 
-Les tests du client et de l’historique s’exécutent sans dépendance Home Assistant et sans identifiants.
+Les tests du client, de l’historique et des tarifs s’exécutent sans dépendance Home Assistant et sans identifiants.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py'

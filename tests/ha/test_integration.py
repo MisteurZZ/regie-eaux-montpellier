@@ -1,21 +1,31 @@
 """Run the config flow, entities and statistics against Home Assistant Core."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from functools import partial
 from json import loads
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant.components.recorder.common import async_recorder_block_till_done
 
+from homeassistant.components.energy import validate as energy_validation
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.components.recorder.statistics import get_metadata, statistics_during_period
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry
+from homeassistant.util import dt as dt_util
 
 from custom_components.regie_eaux_montpellier.api import GENERATE_TOKEN, LOGIN, PORTAL_APP, Response
-from custom_components.regie_eaux_montpellier.const import CONF_CONTRACT, DOMAIN
+from custom_components.regie_eaux_montpellier.const import (
+    CONF_ALERT_THRESHOLD,
+    CONF_CONTRACT,
+    CONF_COST_ENABLED,
+    CONF_TARIFFS,
+    DOMAIN,
+)
 from custom_components.regie_eaux_montpellier.history import PARIS
 from custom_components.regie_eaux_montpellier.http import PortalTransport
 
@@ -28,11 +38,13 @@ def portal():
     """Control the portal transport without contacting a network."""
     state = {
         "status": 200,
+        "request_count": 0,
         "payload": loads((FIXTURES / "readings.json").read_text(encoding="utf-8")),
     }
     script = (FIXTURES / "portal_app.js").read_text(encoding="utf-8")
 
     async def request(self, method, path, *, headers=None, json=None, read_text=False):
+        state["request_count"] += 1
         if (method, path) == ("GET", "/"):
             assert headers["Accept"].startswith("text/html")
             return Response(200, {}, None)
@@ -141,3 +153,97 @@ async def test_reauth_preserves_contract_and_entry(hass, recorder_mock, portal):
     assert entry.data[CONF_CONTRACT] == "TEST"
     assert entry.data["password"] == "new-test-password"
     assert entity_state(hass, entry, "sensor", "meter_index") is not None
+
+
+async def test_estimated_cost_options_publish_energy_statistics(hass, recorder_mock, portal):
+    entry = await add_contract(hass)
+    status = entity_state(hass, entry, "binary_sensor", "portal_status")
+    water_id = status.attributes["energy_statistic_id"]
+    cost_id = f"{DOMAIN}:cout_{entry.unique_id}"
+    water_rows = await recorded_hours(hass, water_id)
+    get_cost_metadata = partial(get_metadata, hass, statistic_ids={cost_id}, statistic_type="sum")
+    assert not await get_instance(hass).async_add_executor_job(get_cost_metadata)
+
+    options = {
+        CONF_ALERT_THRESHOLD: 600,
+        CONF_COST_ENABLED: True,
+        "price_per_m3": 3.6078,
+        "tariff_effective_from": "2026-11-17",
+    }
+    request_count = portal["request_count"]
+    coordinator = entry.runtime_data
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert flow["type"] is FlowResultType.FORM
+    defaults = {str(key.schema): key.default() for key in flow["data_schema"].schema}
+    assert defaults[CONF_COST_ENABLED] is False
+    assert defaults["price_per_m3"] == 3.6078
+    assert defaults["tariff_effective_from"] == "2026-11-17"
+    result = await hass.config_entries.options.async_configure(flow["flow_id"], options)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.runtime_data is coordinator
+    assert entry.options[CONF_ALERT_THRESHOLD] == 600
+    assert portal["request_count"] == request_count
+
+    cost_rows = await recorded_hours(hass, cost_id)
+    assert [row["start"] for row in cost_rows] == [row["start"] for row in water_rows]
+    assert [row["sum"] for row in cost_rows] == pytest.approx(
+        [0, 1.5477462, 1.5477462, 3.0269442, 3.0269442, 4.9499016]
+    )
+    assert await recorded_hours(hass, water_id) == water_rows
+
+    metadata = await get_instance(hass).async_add_executor_job(get_cost_metadata)
+    assert metadata[cost_id][1]["unit_of_measurement"] == "EUR"
+    assert metadata[cost_id][1]["source"] == DOMAIN
+    assert metadata[cost_id][1]["has_sum"] is True
+
+    manager = SimpleNamespace(
+        data={
+            "energy_sources": [
+                {"type": "water", "stat_energy_from": water_id, "stat_cost": cost_id}
+            ],
+            "device_consumption": [],
+        }
+    )
+    with patch.object(energy_validation.data, "async_get_manager", AsyncMock(return_value=manager)):
+        validation = await energy_validation.async_validate(hass)
+    assert validation.as_dict()["energy_sources"] == [[]]
+
+    today = dt_util.utcnow().astimezone(PARIS).date()
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    rejected = await hass.config_entries.options.async_configure(
+        flow["flow_id"],
+        {**options, "price_per_m3": 4.1234, "tariff_effective_from": today.isoformat()},
+    )
+    assert rejected["errors"] == {"tariff_effective_from": "retroactive_tariff"}
+    next_rate_day = max(today + timedelta(days=1), date(2026, 11, 20))
+    options.update(price_per_m3=4.1234, tariff_effective_from=next_rate_day.isoformat())
+    result = await hass.config_entries.options.async_configure(flow["flow_id"], options)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert await recorded_hours(hass, cost_id) == cost_rows
+
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        flow["flow_id"], {**options, CONF_COST_ENABLED: False}
+    )
+    await hass.async_block_till_done()
+    first = portal["payload"]["resultats"][0]
+    first["volumeConsoEnLitres"] = 500
+    first["volumeConsoEnM3"] = 0.500
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    assert await recorded_hours(hass, cost_id) == cost_rows
+    assert (await recorded_hours(hass, water_id))[-1]["sum"] == pytest.approx(1.339)
+
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(flow["flow_id"], options)
+    await hass.async_block_till_done()
+    assert [row["price_per_m3"] for row in entry.options[CONF_TARIFFS]] == ["3.6078", "4.1234"]
+    corrected = await recorded_hours(hass, cost_id)
+    assert [row["start"] for row in corrected] == [row["start"] for row in cost_rows]
+    assert [row["sum"] for row in corrected] == pytest.approx(
+        [0, 1.5477462, 1.5477462, 3.0269442, 3.0269442, 4.8308442]
+    )
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    assert await recorded_hours(hass, cost_id) == corrected

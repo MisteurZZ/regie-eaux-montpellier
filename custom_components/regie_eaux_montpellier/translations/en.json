@@ -37,12 +37,20 @@
   "options": {
     "step": {
       "init": {
-        "title": "Consumption alert",
-        "description": "The alert turns on when the latest reading volume exceeds this threshold. Enter 0 to disable it.",
+        "title": "Water alerts and costs",
+        "description": "Enter 0 L to disable the consumption alert. The estimate covers variable costs including taxes. The initial rate applies from the selected date. To change the rate, choose a future date.",
         "data": {
-          "alert_threshold": "Alert threshold (L)"
+          "alert_threshold": "Alert threshold (L)",
+          "cost_enabled": "Enable estimated costs",
+          "price_per_m3": "Variable price including taxes",
+          "tariff_effective_from": "Rate effective date"
         }
       }
+    },
+    "error": {
+      "invalid_price": "Enter a non-negative price with up to four decimal places.",
+      "invalid_tariff_date": "Enter a valid date.",
+      "retroactive_tariff": "Choose a date from tomorrow onward to change a rate."
     }
   },
   "entity": {
