@@ -25,6 +25,7 @@ from .api import (
     ContractError,
     InvalidAuth,
     LoginProtocolError,
+    MFARequired,
     MontpellierClient,
     ProtocolError,
     TemporaryError,
@@ -59,6 +60,8 @@ class WaterConfigFlow(ConfigFlow, domain=DOMAIN):
             ).fetch_readings(data[CONF_CONTRACT])
         except InvalidAuth:
             return "invalid_auth"
+        except MFARequired:
+            return "mfa_required"
         except ContractError:
             return "invalid_contract"
         except TemporaryError:

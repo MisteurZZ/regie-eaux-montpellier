@@ -25,7 +25,8 @@
       "invalid_contract": "Check the contract number and whether it belongs to this account.",
       "cannot_connect": "The portal is temporarily unreachable. Try again later.",
       "unexpected_response": "The portal returned an unexpected response when reading the contract. See the Home Assistant logs.",
-      "unexpected_login_response": "The portal returned an unexpected login response. See the Home Assistant logs for the failed step."
+      "unexpected_login_response": "The portal returned an unexpected login response. See the Home Assistant logs for the failed step.",
+      "mfa_required": "This account requires a second authentication factor. Use the water portal to access your account."
     },
     "abort": {
       "already_configured": "This contract is already configured.",

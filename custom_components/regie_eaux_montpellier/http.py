@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from http.cookies import SimpleCookie
 from json import JSONDecodeError
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, CookieJar
+from yarl import URL
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
@@ -29,6 +31,14 @@ class PortalTransport:
         """Discard expired or partial login cookies."""
         self._session.cookie_jar.clear()
 
+    def set_token_cookie(self, token: str) -> None:
+        """Mirror the portal's cookie for the authenticated session."""
+        cookies = SimpleCookie()
+        cookies["aelToken"] = token
+        cookies["aelToken"]["secure"] = True
+        cookies["aelToken"]["path"] = "/"
+        self._session.cookie_jar.update_cookies(cookies, response_url=URL(BASE_URL))
+
     def close(self) -> None:
         """Detach from the HA-managed connector."""
         self._session.detach()
@@ -40,6 +50,7 @@ class PortalTransport:
         *,
         headers: dict[str, str] | None = None,
         json: dict[str, str] | None = None,
+        read_text: bool = False,
     ) -> Response:
         """Send a bounded request without following redirects."""
         try:
@@ -49,7 +60,11 @@ class PortalTransport:
                 body = None
                 if 200 <= response.status < 300:
                     try:
-                        body = await response.json(content_type=None)
+                        body = (
+                            await response.text(encoding="utf-8")
+                            if read_text
+                            else await response.json(content_type=None)
+                        )
                     except (JSONDecodeError, UnicodeError):
                         pass
                 return Response(response.status, dict(response.headers), body)

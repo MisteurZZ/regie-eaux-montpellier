@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Mapping, Protocol
+from json import JSONDecodeError, loads
+from typing import TYPE_CHECKING, Mapping, Protocol
 from urllib.parse import quote
 from uuid import uuid4
 
 from .const import BASE_URL
 from .history import InvalidReadings, Reading, parse_readings
 
+if TYPE_CHECKING:
+    from typing import TypeGuard
+
+PORTAL_APP = "/app/app.js"
+GENERATE_TOKEN = "/webapi/Acces/generateToken"
 LOGIN = "/webapi/Utilisateur/authentification"
 CONSUMPTION = "/webapi/Facturation/listeConsommationsFacturees/"
 
@@ -33,7 +40,11 @@ class ProtocolError(PortalError):
 
 
 class LoginProtocolError(ProtocolError):
-    """The login endpoint returned an unsupported response."""
+    """The portal sign-in exchange returned an unsupported response."""
+
+
+class MFARequired(PortalError):
+    """The portal requires a second factor before issuing a session."""
 
 
 class TemporaryError(PortalError):
@@ -58,6 +69,8 @@ class Transport(Protocol):
 
     def clear_cookies(self) -> None: ...
 
+    def set_token_cookie(self, token: str) -> None: ...
+
     async def request(
         self,
         method: str,
@@ -65,6 +78,7 @@ class Transport(Protocol):
         *,
         headers: dict[str, str] | None = None,
         json: dict[str, str] | None = None,
+        read_text: bool = False,
     ) -> Response: ...
 
 
@@ -92,18 +106,35 @@ def _check_status(response: Response) -> None:
     raise ProtocolError(f"Unexpected portal HTTP status {status}")
 
 
-def _valid_header(value: object) -> bool:
+def _valid_header(value: object) -> TypeGuard[str]:
     return isinstance(value, str) and bool(value.strip()) and value.isascii() and value.isprintable()
+
+
+def _application_fields(script: object) -> tuple[str, str]:
+    """Extract the web app's two published string literals without running JS."""
+    if not isinstance(script, str):
+        raise ProtocolError("Public portal script is missing")
+
+    fields: list[str] = []
+    for name in ("WS_APPLICATION_LOGIN", "WS_APPLICATION_PWD"):
+        pattern = r'\b{name}\s*:\s*("(?:[^"\\]|\\.)*")'.format(name=name)
+        match = re.search(pattern, script)
+        if match is None:
+            raise ProtocolError("Public portal script does not contain the app configuration")
+        try:
+            value = loads(match[1])
+        except JSONDecodeError:
+            raise ProtocolError("Public portal app configuration is invalid") from None
+        if not _valid_header(value):
+            raise ProtocolError("Public portal app configuration is invalid")
+        fields.append(value)
+
+    return fields[0], fields[1]
 
 
 def _session_token(response: Response) -> str:
     """Read the session token returned by the portal."""
-    fields = {k.lower(): v for k, v in response.headers.items()}
-    if isinstance(response.body, dict):
-        for key, value in response.body.items():
-            fields.setdefault(key.lower(), value)
-
-    token = fields.get("tokenauthentique") or fields.get("token")
+    token = response.body.get("tokenAuthentique") if isinstance(response.body, dict) else None
     if not _valid_header(token):
         raise LoginProtocolError(f"Login response has no usable session token (HTTP {response.status})")
 
@@ -123,27 +154,77 @@ class MontpellierClient:
         self._username = username
         self._password = password
         self._token: str | None = None
+        self._application: tuple[str, str] | None = None
 
-    async def _login(self) -> None:
-        self._token = None
+    async def _request_open_token(self) -> str:
+        """Acquire an anonymous token using the same public app configuration."""
+        try:
+            _check_status(await self._transport.request("GET", "/"))
+
+            if self._application is None:
+                script = await self._transport.request(
+                    "GET", PORTAL_APP, headers={"Cache-Control": "no-cache"}, read_text=True
+                )
+                _check_status(script)
+                self._application = _application_fields(script.body)
+
+            client_id, access_key = self._application
+            response = await self._transport.request(
+                "POST",
+                GENERATE_TOKEN,
+                headers={
+                    "ConversationId": _conversation_id(),
+                    "Origin": BASE_URL,
+                    "Referer": f"{BASE_URL}/",
+                    "Token": access_key,
+                },
+                json={
+                    "ConversationId": _conversation_id(),
+                    "ClientId": client_id,
+                    "AccessKey": access_key,
+                },
+            )
+            if response.status in (401, 403):
+                self._application = None
+            _check_status(response)
+            token = response.body.get("token") if isinstance(response.body, dict) else None
+            if not _valid_header(token):
+                raise ProtocolError("Anonymous token response has no usable token")
+            return token
+        except ProtocolError as err:
+            raise LoginProtocolError(f"Portal session initialisation failed: {err}") from None
+
+    async def _request_login(self) -> Response:
         self._transport.clear_cookies()
-        response = await self._transport.request(
+        open_token = await self._request_open_token()
+        return await self._transport.request(
             "POST",
             LOGIN,
             headers={
                 "ConversationId": _conversation_id(),
                 "Origin": BASE_URL,
                 "Referer": f"{BASE_URL}/",
+                "Token": open_token,
             },
             json={"identifiant": self._username, "motDePasse": self._password},
         )
+
+    async def _login(self) -> None:
+        self._token = None
+        response = await self._request_login()
+        if response.status == 410:
+            response = await self._request_login()
         if response.status in (401, 403):
             raise InvalidAuth("Portal login rejected")
         try:
             _check_status(response)
         except ProtocolError as err:
             raise LoginProtocolError(str(err)) from None
-        self._token = _session_token(response)
+        if isinstance(response.body, dict) and response.body.get("isMFA") is True:
+            raise MFARequired("Portal login requires a second authentication factor")
+        token = _session_token(response)
+        self._transport.set_token_cookie(token)
+        self._token = token
 
     async def _read(self, path: str) -> Response:
         assert self._token is not None
@@ -158,12 +239,12 @@ class MontpellierClient:
 
         path = CONSUMPTION + quote(contract, safe="")
         response = await self._read(path)
-        if response.status in (401, 403):
+        if response.status in (401, 403, 410):
             await self._login()
             response = await self._read(path)
         if response.status in (400, 403, 404):
             raise ContractError("Portal did not return this subscription")
-        if response.status == 401:
+        if response.status in (401, 410):
             self._token = None
             raise ProtocolError("Portal rejected the renewed session")
 

@@ -25,7 +25,8 @@
       "invalid_contract": "Vérifiez le numéro du contrat et son rattachement à ce compte.",
       "cannot_connect": "Le portail est temporairement inaccessible. Réessayez plus tard.",
       "unexpected_response": "Le portail a renvoyé une réponse inattendue pendant la lecture du contrat. Consultez les journaux de Home Assistant.",
-      "unexpected_login_response": "La réponse de connexion du portail est inattendue. Consultez les journaux de Home Assistant pour connaître l’étape qui a échoué."
+      "unexpected_login_response": "La réponse de connexion du portail est inattendue. Consultez les journaux de Home Assistant pour connaître l’étape qui a échoué.",
+      "mfa_required": "Ce compte exige une seconde étape d’authentification. L’accès à ce compte se fait dans l’agence en ligne."
     },
     "abort": {
       "already_configured": "Ce contrat est déjà configuré.",

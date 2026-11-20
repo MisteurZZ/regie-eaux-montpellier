@@ -14,27 +14,41 @@ from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry
 
-from custom_components.regie_eaux_montpellier.api import LOGIN, Response
+from custom_components.regie_eaux_montpellier.api import GENERATE_TOKEN, LOGIN, PORTAL_APP, Response
 from custom_components.regie_eaux_montpellier.const import CONF_CONTRACT, DOMAIN
 from custom_components.regie_eaux_montpellier.history import PARIS
 from custom_components.regie_eaux_montpellier.http import PortalTransport
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "readings.json"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INPUT = {"username": "test-login", "password": "test-password", CONF_CONTRACT: "TEST"}
 
 
 @pytest.fixture
 def portal():
     """Control the portal transport without contacting a network."""
-    state = {"status": 200, "payload": loads(FIXTURE.read_text(encoding="utf-8"))}
+    state = {
+        "status": 200,
+        "payload": loads((FIXTURES / "readings.json").read_text(encoding="utf-8")),
+    }
+    script = (FIXTURES / "portal_app.js").read_text(encoding="utf-8")
 
-    async def request(self, method, path, *, headers=None, json=None):
-        if method == "POST":
-            assert path == LOGIN
+    async def request(self, method, path, *, headers=None, json=None, read_text=False):
+        if (method, path) == ("GET", "/"):
+            return Response(200, {}, None)
+        if (method, path) == ("GET", PORTAL_APP):
+            assert read_text
+            return Response(200, {}, script)
+        if (method, path) == ("POST", GENERATE_TOKEN):
+            assert headers["Token"] == json["AccessKey"] == "test-app-key"
+            assert json["ClientId"] == "test-client"
+            return Response(200, {}, {"token": "openToken-fixture"})
+        if (method, path) == ("POST", LOGIN):
+            assert headers["Token"] == "openToken-fixture"
             if state["status"] == 401:
                 return Response(401, {}, None)
-            return Response(200, {"Token": "fixture", "ConversationId": "fixture"}, None)
-        assert path.endswith("/TEST")
+            return Response(200, {}, {"tokenAuthentique": "fixture"})
+        assert method == "GET" and path.endswith("/TEST")
+        assert headers["Token"] == "fixture"
         if state["status"] != 200:
             return Response(state["status"], {"Retry-After": "1800"}, None)
         return Response(200, {}, state["payload"])

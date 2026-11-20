@@ -8,17 +8,20 @@ from uuid import UUID
 
 from custom_components.regie_eaux_montpellier.api import (
     CONSUMPTION,
+    GENERATE_TOKEN,
     LOGIN,
+    PORTAL_APP,
     ContractError,
     InvalidAuth,
     LoginProtocolError,
+    MFARequired,
     MontpellierClient,
     ProtocolError,
     Response,
     TemporaryError,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "readings.json"
+FIXTURES = Path(__file__).parent / "fixtures"
 CONVERSATION_PREFIX = "JS-WEB-Netscape-"
 
 
@@ -27,12 +30,16 @@ class FakeTransport:
         self.responses = deque(responses)
         self.calls = []
         self.cleared = 0
+        self.cookie_tokens = []
 
     def clear_cookies(self):
         self.cleared += 1
 
-    async def request(self, method, path, *, headers=None, json=None):
-        self.calls.append((method, path, headers, json))
+    def set_token_cookie(self, token):
+        self.cookie_tokens.append(token)
+
+    async def request(self, method, path, *, headers=None, json=None, read_text=False):
+        self.calls.append((method, path, headers, json, read_text))
         response = self.responses.popleft()
         if isinstance(response, Exception):
             raise response
@@ -40,102 +47,180 @@ class FakeTransport:
 
 
 def login(token="session-one"):
-    return Response(200, {"ToKen": token, "ConversationId": "fixture-echo"}, None)
+    return Response(200, {}, {"tokenAuthentique": token})
+
+
+def open_token(token="openToken-fixture"):
+    return Response(200, {}, {"token": token, "expirationDate": "2026-11-20T14:30:56+01:00"})
+
+
+def bootstrap(*, cached=False, token="openToken-fixture"):
+    landing = Response(200, {}, None)
+    if cached:
+        return landing, open_token(token)
+    script = (FIXTURES / "portal_app.js").read_text(encoding="utf-8")
+    return landing, Response(200, {}, script), open_token(token)
 
 
 def readings():
-    return Response(200, {}, loads(FIXTURE.read_text(encoding="utf-8")))
+    return Response(200, {}, loads((FIXTURES / "readings.json").read_text(encoding="utf-8")))
 
 
 class PortalClientTest(IsolatedAsyncioTestCase):
     async def test_login_request_and_session_reuse(self):
-        transport = FakeTransport(login(), readings(), readings())
+        transport = FakeTransport(*bootstrap(), login(), readings(), readings())
         client = MontpellierClient(transport, "subscriber", "secret-example")
         readings_one = await client.fetch_readings("TEST")
         readings_two = await client.fetch_readings("TEST")
         self.assertEqual(readings_one, readings_two)
         self.assertEqual(transport.cleared, 1)
-        method, path, headers, body = transport.calls[0]
+        self.assertEqual(transport.cookie_tokens, ["session-one"])
+        self.assertEqual(transport.calls[:2], [
+            ("GET", "/", None, None, False),
+            ("GET", PORTAL_APP, {"Cache-Control": "no-cache"}, None, True),
+        ])
+        method, path, headers, body, _ = transport.calls[2]
+        self.assertEqual((method, path), ("POST", GENERATE_TOKEN))
+        self.assertEqual(headers["Token"], "test-app-key")
+        self.assertEqual(body["AccessKey"], "test-app-key")
+        self.assertEqual(body["ClientId"], "test-client")
+        conversations = [headers["ConversationId"], body["ConversationId"]]
+        method, path, headers, body, _ = transport.calls[3]
         self.assertEqual((method, path), ("POST", LOGIN))
         self.assertEqual(body, {"identifiant": "subscriber", "motDePasse": "secret-example"})
+        self.assertEqual(headers["Token"], "openToken-fixture")
         self.assertEqual(headers["Origin"], "https://ael.regiedeseaux3m.fr")
         self.assertEqual(headers["Referer"], "https://ael.regiedeseaux3m.fr/")
-        conversations = [headers["ConversationId"]]
-        for method, path, headers, body in transport.calls[1:]:
+        conversations.append(headers["ConversationId"])
+        for method, path, headers, body, _ in transport.calls[4:]:
             self.assertEqual((method, path, body), ("GET", CONSUMPTION + "TEST", None))
             self.assertEqual(headers["Token"], "session-one")
             conversations.append(headers["ConversationId"])
-        self.assertEqual(len(set(conversations)), 3)
+        self.assertEqual(len(set(conversations)), 5)
         for cid in conversations:
             self.assertTrue(cid.startswith(CONVERSATION_PREFIX))
             self.assertEqual(UUID(cid.removeprefix(CONVERSATION_PREFIX)).version, 4)
 
-    async def test_session_token_in_json_without_a_conversation_header(self):
+    async def test_prefers_the_subscriber_token_to_an_echoed_header(self):
         transport = FakeTransport(
+            *bootstrap(),
             Response(200, {"Token": "temporary"}, {"tokenAuthentique": "session-json"}),
             readings(),
-            readings(),
         )
-        client = MontpellierClient(transport, "a", "b")
-        await client.fetch_readings("TEST")
-        await client.fetch_readings("TEST")
-        headers = [call[2] for call in transport.calls]
-        conversations = [header["ConversationId"] for header in headers]
-        self.assertEqual(len(set(conversations)), 3)
-        self.assertTrue(all(cid.startswith(CONVERSATION_PREFIX) for cid in conversations))
-        self.assertEqual([h["Token"] for h in headers[1:]], ["session-json"] * 2)
+        await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+        self.assertEqual(transport.calls[-1][2]["Token"], "session-json")
+        self.assertEqual(transport.cookie_tokens, ["session-json"])
 
     async def test_expired_session_is_renewed_once(self):
-        for status in (401, 403):
+        for status in (401, 403, 410):
             with self.subTest(status=status):
-                transport = FakeTransport(login(), Response(status, {}, None), login("new"), readings())
+                transport = FakeTransport(
+                    *bootstrap(), login(), Response(status, {}, None),
+                    *bootstrap(cached=True, token="openToken-new"), login("new"), readings(),
+                )
                 await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
                 self.assertEqual(transport.cleared, 2)
-                self.assertEqual([call[0] for call in transport.calls], ["POST", "GET", "POST", "GET"])
+                self.assertEqual(transport.cookie_tokens, ["session-one", "new"])
+                login_attempts = [call for call in transport.calls if call[1] == LOGIN]
+                self.assertEqual([call[2]["Token"] for call in login_attempts], [
+                    "openToken-fixture", "openToken-new",
+                ])
+                self.assertEqual(sum(call[1] == PORTAL_APP for call in transport.calls), 1)
                 self.assertEqual(transport.calls[-1][2]["Token"], "new")
 
+    async def test_expired_open_token_is_renewed_once_during_login(self):
+        transport = FakeTransport(
+            *bootstrap(), Response(410, {}, None),
+            *bootstrap(cached=True), Response(410, {}, None),
+        )
+        with self.assertRaises(LoginProtocolError):
+            await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+        self.assertEqual(sum(call[1] == LOGIN for call in transport.calls), 2)
+        self.assertEqual(transport.cookie_tokens, [])
+
     async def test_rejected_credentials_trigger_reauthentication(self):
-        transport = FakeTransport(login(), Response(401, {}, None), Response(401, {}, None))
+        transport = FakeTransport(
+            *bootstrap(), login(), Response(401, {}, None),
+            *bootstrap(cached=True), Response(401, {}, None),
+        )
         with self.assertRaises(InvalidAuth):
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
-        self.assertEqual(len(transport.calls), 3)
+        self.assertEqual(transport.calls[-1][1], LOGIN)
 
-    async def test_persistent_401_and_403_are_classified(self):
-        for status, expected in ((401, ProtocolError), (403, ContractError)):
+    async def test_persistent_session_rejection_is_classified(self):
+        for status, expected in ((401, ProtocolError), (403, ContractError), (410, ProtocolError)):
             with self.subTest(status=status):
                 denied = Response(status, {}, None)
-                transport = FakeTransport(login(), denied, login(), denied)
+                transport = FakeTransport(
+                    *bootstrap(), login(), denied, *bootstrap(cached=True), login(), denied
+                )
                 with self.assertRaises(expected):
                     await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
-                self.assertEqual(len(transport.calls), 4)
+                self.assertEqual(sum(call[1] == CONSUMPTION + "TEST" for call in transport.calls), 2)
 
     async def test_rate_limit_does_not_trigger_login_again(self):
-        transport = FakeTransport(login(), Response(429, {"Retry-After": "1800"}, None))
+        transport = FakeTransport(
+            *bootstrap(), login(), Response(429, {"Retry-After": "1800"}, None)
+        )
         with self.assertRaises(TemporaryError) as raised:
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertEqual(raised.exception.retry_after, 1800)
-        self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(len(transport.calls), 5)
 
     async def test_http_date_retry_after(self):
-        transport = FakeTransport(Response(503, {"retry-after": "Wed, 01 Jan 2070 00:00:00 GMT"}, None))
+        transport = FakeTransport(
+            Response(503, {"retry-after": "Wed, 01 Jan 2070 00:00:00 GMT"}, None)
+        )
         with self.assertRaises(TemporaryError) as raised:
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertGreater(raised.exception.retry_after, 0)
 
     async def test_unknown_200_login_response_is_a_protocol_error(self):
-        transport = FakeTransport(Response(200, {}, {"debug": "sensitive payload"}))
+        transport = FakeTransport(
+            *bootstrap(),
+            Response(200, {"Token": "openToken-fixture"}, {"debug": "sensitive payload"}),
+        )
         with self.assertRaises(LoginProtocolError) as raised:
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertIn("HTTP 200", str(raised.exception))
         self.assertNotIn("sensitive", str(raised.exception))
-        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[-1][1], LOGIN)
+
+    async def test_unsupported_public_configuration_never_sends_credentials(self):
+        transport = FakeTransport(Response(200, {}, None), Response(200, {}, "unrelated JavaScript"))
+        with self.assertRaises(LoginProtocolError):
+            await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+        self.assertEqual([call[0] for call in transport.calls], ["GET", "GET"])
+
+    async def test_rejected_app_configuration_is_reloaded_on_the_next_attempt(self):
+        landing, script, _ = bootstrap()
+        transport = FakeTransport(
+            landing, script, Response(403, {}, None), *bootstrap(), login(), readings()
+        )
+        client = MontpellierClient(transport, "a", "b")
+        with self.assertRaises(LoginProtocolError):
+            await client.fetch_readings("TEST")
+        await client.fetch_readings("TEST")
+        self.assertEqual(sum(call[1] == PORTAL_APP for call in transport.calls), 2)
+        self.assertEqual(sum(call[1] == LOGIN for call in transport.calls), 1)
+
+    async def test_second_factor_challenge_is_not_used_as_a_session(self):
+        transport = FakeTransport(
+            *bootstrap(), Response(200, {}, {"isMFA": True, "tokenAuthentique": "challenge"})
+        )
+        with self.assertRaises(MFARequired):
+            await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+        self.assertEqual(transport.cookie_tokens, [])
+        self.assertEqual(transport.calls[-1][1], LOGIN)
 
     async def test_redirect_is_refused(self):
         transport = FakeTransport(Response(302, {"location": "https://example.org"}, None))
-        with self.assertRaises(ProtocolError):
+        with self.assertRaises(LoginProtocolError):
             await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
         self.assertEqual(len(transport.calls), 1)
 
     async def test_valid_empty_account_has_no_readings(self):
-        transport = FakeTransport(login(), Response(200, {}, {"nbTotalResultats": 0, "resultats": []}))
+        transport = FakeTransport(
+            *bootstrap(), login(), Response(200, {}, {"nbTotalResultats": 0, "resultats": []})
+        )
         self.assertEqual(await MontpellierClient(transport, "a", "b").fetch_readings("TEST"), ())

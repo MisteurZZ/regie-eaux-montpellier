@@ -2,7 +2,7 @@
 
 Intégration personnalisée pour le portail abonnés de la Régie des eaux de Montpellier Méditerranée Métropole. Elle récupère les relevés du compteur d’eau et importe les volumes à leur date de mesure dans le tableau de bord Énergie. Elle est configurée depuis l’interface de Home Assistant et s’exécute sur Home Assistant OS sans navigateur.
 
-**Version 0.1.0 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La requête de connexion exacte et la provenance des jetons doivent être confirmées sur un compte réel avant une utilisation régulière. La cible est Home Assistant OS avec Core 2026.11.x.
+**Version 0.1.1 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La connexion suit la séquence du portail de Montpellier et reste à essayer depuis Home Assistant avec un compte réel. La cible est Home Assistant OS avec Core 2026.11.x.
 
 ## Installation manuelle sur Home Assistant Green
 
@@ -14,7 +14,7 @@ Intégration personnalisée pour le portail abonnés de la Régie des eaux de Mo
 
 ## Installation depuis le Marketplace ou HACS
 
-Les installations depuis un lien nécessitent une publication du code dans un dépôt GitHub public. Ce projet est livré avec les métadonnées nécessaires et le chemin prévu `MisteurZZ/regie-eaux-montpellier`. Si le dépôt est publié sous une autre URL, ajustez les champs `documentation`, `issue_tracker` et `codeowners` du manifeste. Cette version est livrée sous forme d’archive et de dépôt Git local.
+Les installations depuis un lien nécessitent une publication du code dans un dépôt GitHub public. Ce projet est livré avec les métadonnées nécessaires et le chemin prévu `MisteurZZ/regie-eaux-montpellier`. Si le dépôt est publié sous une autre URL, ajustez les champs `documentation`, `issue_tracker` et `codeowners` du manifeste. Le dépôt GitHub `MisteurZZ/regie-eaux-montpellier` contient le code de l’intégration.
 
 - **Home Assistant 2026.11.x**. HACS est remplacé par le Marketplace intégré. Après publication, ouvrez **Paramètres → Marketplace → Ajouter depuis un lien**, connectez GitHub si demandé, entrez l’URL publique et installez le projet comme intégration. Redémarrez Home Assistant si l’interface le demande. [Documentation du Marketplace](https://www.home-assistant.io/integrations/marketplace/)
 - **Home Assistant 2026.10 avec HACS**. Dans **HACS → menu ⋮ → Dépôts personnalisés**, entrez l’URL publique, sélectionnez **Intégration**, puis téléchargez l’intégration et redémarrez. Cette version de Home Assistant est compatible avec les API visées et le parcours HACS reste à vérifier sur une instance. [Documentation HACS](https://www.hacs.xyz/docs/faq/custom_repositories/)
@@ -63,17 +63,18 @@ Le cumul des trois intervalles est de **1,372 m³**. La moyenne des dates ayant 
 
 - **Données anciennes avec connexion active**. Comparez la date du dernier relevé au portail. L’intégration relit la liste disponible à chaque synchronisation et permet ainsi de récupérer les journées publiées en retard.
 - **Connexion inactive**. Les capteurs gardent les dernières valeurs connues. Après la première synchronisation, un échec temporaire décale les essais de 15, 30, 60 puis 120 minutes. Le portail peut demander un délai plus long avec `Retry-After`. En régime normal, la synchronisation a lieu au démarrage puis toutes les 24 heures.
-- **Session expirée**. Un refus HTTP 401 ou 403 pendant la lecture déclenche une reconnexion et une seule reprise de la requête. Si la connexion elle-même refuse les identifiants, Home Assistant ouvre le parcours de réauthentification. Un refus de lecture répété peut aussi signaler un problème de contrat ou de protocole.
+- **Session expirée**. Un refus HTTP 401, 403 ou 410 pendant la lecture déclenche une reconnexion et une seule reprise de la requête. Si la connexion elle-même refuse les identifiants, Home Assistant ouvre le parcours de réauthentification. Un refus de lecture répété peut aussi signaler un problème de contrat ou de protocole.
 - **Réponse inattendue**. Vérifiez d’abord que vous pouvez vous connecter au portail. Dans **Paramètres → Système → Journaux**, recherchez `Portal login validation failed` ou `Portal readings validation failed` pour distinguer l’étape en cause. Consultez ensuite la liste de validation ci-dessous. Le client vérifie le format des mesures et signale une réponse paginée partielle plutôt que d’importer un historique tronqué à son insu.
 - **Diagnostic**. Le fichier téléchargeable depuis l’intégration indique uniquement la réussite de la synchronisation et la présence de relevés et de volumes. Home Assistant stocke le mot de passe dans son entrée de configuration. Les cookies et jetons restent en mémoire pendant la session.
 
 ## Validation sur un contrat réel avant mise en production
 
-1. Dans l’onglet Réseau du navigateur pendant votre connexion habituelle, vérifiez la méthode, le type de contenu et **les noms des champs** envoyés à `/webapi/Utilisateur/authentification`. Le client d’essai suppose un corps JSON avec `identifiant` et `motDePasse`.
-2. Le portail de Montpellier utilise un identifiant de conversation au format `JS-WEB-Netscape-<UUID>`. L’appel `generateToken` est visible et la requête d’authentification envoie ensuite un jeton `openToken-…` dans l’en-tête `Token`. Il reste à préciser la méthode, le chemin, les champs de requête et de réponse de `generateToken`, puis à confirmer le nom du champ qui contient le jeton de session après connexion. Relevez uniquement les noms de champs, chemins et codes HTTP. Gardez privés les mots de passe, les jetons et les cookies.
-3. Vérifiez la forme d’une connexion refusée, le signal d’expiration et le renouvellement après une expiration réelle. Si le portail encode un refus dans un HTTP 200 ou impose un échange préalable, il faut adapter le client et sa fixture.
-4. Vérifiez le nombre de résultats et la profondeur de l’historique sur un contrat plus ancien. Si `nbTotalResultats` dépasse le nombre de lignes retournées, il faut identifier les paramètres de pagination utilisés normalement par le portail. Vérifiez aussi le traitement des corrections et des éventuels intervalles couvrant plusieurs jours.
-5. Comparez le dernier index et le dernier volume à l’agence en ligne. Dans Énergie, comparez plusieurs dates disponibles, puis relancez une synchronisation et redémarrez Home Assistant. Vérifiez que la source reste la même, que les jours gardent leur consommation et que le cumul ne double pas. Vérifiez le bouton d’actualisation et l’état de fraîcheur.
+Le client lit les paramètres de l’application publiés dans `/app/app.js` sur le portail. Il les utilise pour obtenir un jeton temporaire auprès de `/webapi/Acces/generateToken`, puis transmet ce jeton au POST `/webapi/Utilisateur/authentification`. La réponse de connexion renvoie le jeton de session dans `tokenAuthentique`. L’intégration conserve les paramètres publics, jetons et cookies en mémoire. Si le compte exige une seconde étape d’authentification, l’intégration affiche un message dans le formulaire.
+
+1. Vérifiez que Home Assistant charge les relevés de votre contrat après la saisie des identifiants. Si le formulaire affiche une erreur, relevez uniquement le message affiché et les lignes de journal commençant par `Portal login validation failed` ou `Portal readings validation failed`.
+2. Comparez le dernier index et le dernier volume à l’agence en ligne, puis vérifiez le bouton d’actualisation. Après une expiration réelle, vérifiez que la synchronisation suivante renouvelle la session.
+3. Dans Énergie, comparez plusieurs dates disponibles. Relancez une synchronisation et redémarrez Home Assistant. Vérifiez que la source reste la même, que les jours gardent leur consommation et que le cumul reste exact.
+4. Sur un contrat plus ancien, vérifiez le nombre de résultats et la profondeur de l’historique. Si `nbTotalResultats` dépasse le nombre de lignes retournées, identifiez les paramètres de pagination utilisés par le portail. Vérifiez aussi le traitement des corrections et des intervalles couvrant plusieurs jours.
 
 ## Développement et licence
 
