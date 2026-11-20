@@ -161,7 +161,7 @@ async def test_estimated_cost_options_publish_energy_statistics(hass, recorder_m
     water_id = status.attributes["energy_statistic_id"]
     cost_id = f"{DOMAIN}:cout_{entry.unique_id}"
     water_rows = await recorded_hours(hass, water_id)
-    get_cost_metadata = partial(get_metadata, hass, statistic_ids={cost_id}, statistic_type="sum")
+    get_cost_metadata = partial(get_metadata, hass, statistic_ids={cost_id})
     assert not await get_instance(hass).async_add_executor_job(get_cost_metadata)
 
     options = {

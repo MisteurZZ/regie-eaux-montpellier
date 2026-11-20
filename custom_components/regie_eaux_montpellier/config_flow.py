@@ -237,7 +237,7 @@ class WaterOptionsFlow(OptionsFlow):
                     vol.Required(_PRICE_FIELD, default=defaults[_PRICE_FIELD]): NumberSelector(
                         NumberSelectorConfig(
                             min=0,
-                            step=0.0001,
+                            step="any",
                             mode=NumberSelectorMode.BOX,
                             unit_of_measurement="€/m³",
                         )
