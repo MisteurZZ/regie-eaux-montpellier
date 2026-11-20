@@ -160,6 +160,14 @@ class PortalClientTest(IsolatedAsyncioTestCase):
                     await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
                 self.assertEqual(sum(call[1] == CONSUMPTION + "TEST" for call in transport.calls), 2)
 
+    async def test_readings_session_error_reports_both_http_statuses(self):
+        transport = FakeTransport(
+            *bootstrap(), login(), Response(401, {}, None),
+            *bootstrap(cached=True), login(), Response(410, {}, None),
+        )
+        with self.assertRaisesRegex(ProtocolError, r"HTTP 410 after HTTP 401"):
+            await MontpellierClient(transport, "a", "b").fetch_readings("TEST")
+
     async def test_rate_limit_does_not_trigger_login_again(self):
         transport = FakeTransport(
             *bootstrap(), login(), Response(429, {"Retry-After": "1800"}, None)

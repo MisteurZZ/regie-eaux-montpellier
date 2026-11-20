@@ -1,9 +1,12 @@
 """Verify the portal login request emitted by the Home Assistant transport."""
 
+from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from custom_components.regie_eaux_montpellier.api import LOGIN
+from yarl import URL
+
+from custom_components.regie_eaux_montpellier.api import CONSUMPTION, LOGIN
 from custom_components.regie_eaux_montpellier.const import BASE_URL
 from custom_components.regie_eaux_montpellier.http import PortalTransport
 
@@ -42,3 +45,18 @@ async def test_subscriber_login_sends_utf8_json_and_retains_the_rejection_detail
     )
     assert response.status == 400
     assert response.body == {"aelCode": "U12"}
+
+
+async def test_readings_cookie_keeps_the_portal_load_balancer_format():
+    with patch(
+        "custom_components.regie_eaux_montpellier.http.async_create_clientsession"
+    ) as create_session:
+        PortalTransport(object())
+
+    jar = create_session.call_args.kwargs["cookie_jar"]
+    cookies = SimpleCookie()
+    cookies.load("BIGipServerFixture=!dummy/W+YT==; Path=/; Secure")
+    jar.update_cookies(cookies, response_url=URL(BASE_URL))
+
+    outgoing = jar.filter_cookies(URL(BASE_URL + CONSUMPTION + "TEST"))
+    assert outgoing["BIGipServerFixture"].coded_value == "!dummy/W+YT=="

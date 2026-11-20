@@ -29,7 +29,8 @@ class PortalTransport:
         self._session: ClientSession = async_create_clientsession(
             hass,
             auto_cleanup=False,
-            cookie_jar=CookieJar(),
+            # The portal sends the load balancer cookie as an unquoted value.
+            cookie_jar=CookieJar(quote_cookie=False),
             timeout=ClientTimeout(total=20),
             headers={"Accept": API_ACCEPT},
         )

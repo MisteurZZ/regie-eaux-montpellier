@@ -285,14 +285,17 @@ class MontpellierClient:
 
         path = CONSUMPTION + quote(contract, safe="")
         response = await self._read(path)
-        if response.status in (401, 403, 410):
+        initial_status = response.status
+        if initial_status in (401, 403, 410):
             await self._login()
             response = await self._read(path)
         if response.status in (400, 403, 404):
             raise ContractError("Portal did not return this subscription")
         if response.status in (401, 410):
             self._token = None
-            raise ProtocolError("Portal rejected the renewed session")
+            raise ProtocolError(
+                f"Portal rejected the renewed session (HTTP {response.status} after HTTP {initial_status})"
+            )
 
         _check_status(response, step="Meter readings request")
         try:

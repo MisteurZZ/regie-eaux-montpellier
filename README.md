@@ -2,7 +2,7 @@
 
 Intégration personnalisée pour le portail abonnés de la Régie des eaux de Montpellier Méditerranée Métropole. Elle récupère les relevés du compteur d’eau et importe les volumes à leur date de mesure dans le tableau de bord Énergie. Elle est configurée depuis l’interface de Home Assistant et s’exécute sur Home Assistant OS sans navigateur.
 
-**Version 0.1.3 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La commande de vérification sur Mac a confirmé la connexion et la récupération de relevés sur un compte réel. La validation depuis Home Assistant reste à faire. La cible est Home Assistant OS avec Core 2026.11.x.
+**Version 0.1.4 pour essais.** Le traitement de l’historique est testé avec la réponse anonymisée de Montpellier. La commande de vérification sur Mac a confirmé la connexion et la récupération de relevés sur un compte réel. La validation depuis Home Assistant reste à faire. La cible est Home Assistant OS avec Core 2026.11.x.
 
 ## Installation manuelle sur Home Assistant Green
 
@@ -63,7 +63,7 @@ Le cumul des trois intervalles est de **1,372 m³**. La moyenne des dates ayant 
 
 - **Données anciennes avec connexion active**. Comparez la date du dernier relevé au portail. L’intégration relit la liste disponible à chaque synchronisation et permet ainsi de récupérer les journées publiées en retard.
 - **Connexion inactive**. Les capteurs gardent les dernières valeurs connues. Après la première synchronisation, un échec temporaire décale les essais de 15, 30, 60 puis 120 minutes. Le portail peut demander un délai plus long avec `Retry-After`. En régime normal, la synchronisation a lieu au démarrage puis toutes les 24 heures.
-- **Session expirée**. Un refus HTTP 401, 403 ou 410 pendant la lecture déclenche une reconnexion et une seule reprise de la requête. Si la connexion elle-même refuse les identifiants, Home Assistant ouvre le parcours de réauthentification. Un refus de lecture répété peut aussi signaler un problème de contrat ou de protocole.
+- **Session expirée**. Un refus HTTP 401, 403 ou 410 pendant la lecture déclenche une reconnexion et une seule reprise de la requête. Si la connexion elle-même refuse les identifiants, Home Assistant ouvre le parcours de réauthentification. Le journal indique les codes HTTP successifs si le portail rejette aussi la session renouvelée.
 - **Réponse inattendue**. Vérifiez d’abord que vous pouvez vous connecter au portail. Dans **Paramètres → Système → Journaux**, recherchez `Portal login validation failed` ou `Portal readings validation failed` pour distinguer l’étape en cause. En cas de refus HTTP, le journal identifie la page de connexion, le script public, le jeton anonyme ou la requête de connexion. Consultez ensuite la liste de validation ci-dessous. Le client vérifie le format des mesures et signale une réponse paginée partielle plutôt que d’importer un historique tronqué à son insu.
 - **Diagnostic**. Le fichier téléchargeable depuis l’intégration indique uniquement la réussite de la synchronisation et la présence de relevés et de volumes. Home Assistant stocke le mot de passe dans son entrée de configuration. Les cookies et jetons restent en mémoire pendant la session.
 
