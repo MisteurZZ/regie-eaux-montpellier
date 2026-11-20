@@ -9,6 +9,7 @@ from typing import Mapping, Protocol
 from urllib.parse import quote
 from uuid import uuid4
 
+from .const import BASE_URL
 from .history import InvalidReadings, Reading, parse_readings
 
 LOGIN = "/webapi/Utilisateur/authentification"
@@ -95,8 +96,8 @@ def _valid_header(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip()) and value.isascii() and value.isprintable()
 
 
-def _session_headers(response: Response) -> dict[str, str]:
-    """Read the session token and any conversation ID supplied by the portal."""
+def _session_token(response: Response) -> str:
+    """Read the session token returned by the portal."""
     fields = {k.lower(): v for k, v in response.headers.items()}
     if isinstance(response.body, dict):
         for key, value in response.body.items():
@@ -106,11 +107,12 @@ def _session_headers(response: Response) -> dict[str, str]:
     if not _valid_header(token):
         raise LoginProtocolError(f"Login response has no usable session token (HTTP {response.status})")
 
-    result = {"Token": token}
-    conversation_id = fields.get("conversationid")
-    if _valid_header(conversation_id):
-        result["ConversationId"] = conversation_id
-    return result
+    return token
+
+
+def _conversation_id() -> str:
+    """Build the per-request identifier used by the subscriber portal."""
+    return f"JS-WEB-Netscape-{uuid4()}"
 
 
 class MontpellierClient:
@@ -120,15 +122,19 @@ class MontpellierClient:
         self._transport = transport
         self._username = username
         self._password = password
-        self._session_headers: dict[str, str] | None = None
+        self._token: str | None = None
 
     async def _login(self) -> None:
-        self._session_headers = None
+        self._token = None
         self._transport.clear_cookies()
         response = await self._transport.request(
             "POST",
             LOGIN,
-            headers={"ConversationId": str(uuid4())},
+            headers={
+                "ConversationId": _conversation_id(),
+                "Origin": BASE_URL,
+                "Referer": f"{BASE_URL}/",
+            },
             json={"identifiant": self._username, "motDePasse": self._password},
         )
         if response.status in (401, 403):
@@ -137,17 +143,17 @@ class MontpellierClient:
             _check_status(response)
         except ProtocolError as err:
             raise LoginProtocolError(str(err)) from None
-        self._session_headers = _session_headers(response)
+        self._token = _session_token(response)
 
     async def _read(self, path: str) -> Response:
-        assert self._session_headers is not None
-        headers = dict(self._session_headers)
-        headers.setdefault("ConversationId", str(uuid4()))
-        return await self._transport.request("GET", path, headers=headers)
+        assert self._token is not None
+        return await self._transport.request(
+            "GET", path, headers={"Token": self._token, "ConversationId": _conversation_id()}
+        )
 
     async def fetch_readings(self, contract: str) -> tuple[Reading, ...]:
         """Read the supplied subscription under the subscriber's session."""
-        if self._session_headers is None:
+        if self._token is None:
             await self._login()
 
         path = CONSUMPTION + quote(contract, safe="")
@@ -158,7 +164,7 @@ class MontpellierClient:
         if response.status in (400, 403, 404):
             raise ContractError("Portal did not return this subscription")
         if response.status == 401:
-            self._session_headers = None
+            self._token = None
             raise ProtocolError("Portal rejected the renewed session")
 
         _check_status(response)

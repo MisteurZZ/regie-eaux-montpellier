@@ -19,6 +19,7 @@ from custom_components.regie_eaux_montpellier.api import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "readings.json"
+CONVERSATION_PREFIX = "JS-WEB-Netscape-"
 
 
 class FakeTransport:
@@ -39,7 +40,7 @@ class FakeTransport:
 
 
 def login(token="session-one"):
-    return Response(200, {"ToKen": token}, {"conversationId": "conversation-test"})
+    return Response(200, {"ToKen": token, "ConversationId": "fixture-echo"}, None)
 
 
 def readings():
@@ -57,10 +58,17 @@ class PortalClientTest(IsolatedAsyncioTestCase):
         method, path, headers, body = transport.calls[0]
         self.assertEqual((method, path), ("POST", LOGIN))
         self.assertEqual(body, {"identifiant": "subscriber", "motDePasse": "secret-example"})
-        self.assertEqual(UUID(headers["ConversationId"]).version, 4)
+        self.assertEqual(headers["Origin"], "https://ael.regiedeseaux3m.fr")
+        self.assertEqual(headers["Referer"], "https://ael.regiedeseaux3m.fr/")
+        conversations = [headers["ConversationId"]]
         for method, path, headers, body in transport.calls[1:]:
             self.assertEqual((method, path, body), ("GET", CONSUMPTION + "TEST", None))
-            self.assertEqual(headers, {"Token": "session-one", "ConversationId": "conversation-test"})
+            self.assertEqual(headers["Token"], "session-one")
+            conversations.append(headers["ConversationId"])
+        self.assertEqual(len(set(conversations)), 3)
+        for cid in conversations:
+            self.assertTrue(cid.startswith(CONVERSATION_PREFIX))
+            self.assertEqual(UUID(cid.removeprefix(CONVERSATION_PREFIX)).version, 4)
 
     async def test_session_token_in_json_without_a_conversation_header(self):
         transport = FakeTransport(
@@ -74,7 +82,7 @@ class PortalClientTest(IsolatedAsyncioTestCase):
         headers = [call[2] for call in transport.calls]
         conversations = [header["ConversationId"] for header in headers]
         self.assertEqual(len(set(conversations)), 3)
-        self.assertTrue(all(UUID(cid).version == 4 for cid in conversations))
+        self.assertTrue(all(cid.startswith(CONVERSATION_PREFIX) for cid in conversations))
         self.assertEqual([h["Token"] for h in headers[1:]], ["session-json"] * 2)
 
     async def test_expired_session_is_renewed_once(self):
