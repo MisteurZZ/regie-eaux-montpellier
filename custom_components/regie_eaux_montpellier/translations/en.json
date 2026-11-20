@@ -1,0 +1,103 @@
+{
+  "title": "Régie des eaux Montpellier",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect a water subscription",
+        "description": "Enter your customer portal credentials and the contract number shown on your bill.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "contract": "Contract number"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect your water account",
+        "description": "Enter valid credentials for the existing contract.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The water portal rejected the credentials.",
+      "invalid_contract": "Check the contract number and whether it belongs to this account.",
+      "cannot_connect": "The portal is temporarily unreachable. Try again later.",
+      "unexpected_response": "The portal returned an unexpected response. See troubleshooting."
+    },
+    "abort": {
+      "already_configured": "This contract is already configured.",
+      "already_in_progress": "This contract is already being configured.",
+      "reauth_successful": "Your water account was reconnected."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Consumption alert",
+        "description": "The alert turns on when the latest reading volume exceeds this threshold. Enter 0 to disable it.",
+        "data": {
+          "alert_threshold": "Alert threshold (L)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "meter_index": {
+        "name": "Meter index"
+      },
+      "last_volume": {
+        "name": "Latest reading consumption"
+      },
+      "last_reading": {
+        "name": "Latest reading time"
+      },
+      "daily_average": {
+        "name": "Daily average"
+      },
+      "month_volume": {
+        "name": "This month's consumption"
+      },
+      "year_volume": {
+        "name": "This year's consumption"
+      }
+    },
+    "binary_sensor": {
+      "portal_status": {
+        "name": "Portal connectivity",
+        "state_attributes": {
+          "last_reading": {
+            "name": "Latest reading"
+          },
+          "reading_age_hours": {
+            "name": "Reading age (h)"
+          },
+          "reading_stale": {
+            "name": "Stale reading"
+          },
+          "freshness_limit_hours": {
+            "name": "Freshness limit (h)"
+          },
+          "energy_statistic_id": {
+            "name": "Energy statistic ID"
+          }
+        }
+      },
+      "consumption_alert": {
+        "name": "High consumption",
+        "state_attributes": {
+          "threshold_litres": {
+            "name": "Alert threshold (L)"
+          }
+        }
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh readings"
+      }
+    }
+  }
+}

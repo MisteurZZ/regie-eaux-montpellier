@@ -1,0 +1,103 @@
+{
+  "title": "Régie des eaux Montpellier",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connecter un contrat d’eau",
+        "description": "Utilisez les identifiants de l’agence en ligne et le numéro de contrat indiqué sur votre facture.",
+        "data": {
+          "username": "Identifiant",
+          "password": "Mot de passe",
+          "contract": "Numéro de contrat"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnecter le compte de la Régie",
+        "description": "Saisissez les identifiants valides pour le contrat déjà configuré.",
+        "data": {
+          "username": "Identifiant",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "La Régie a refusé les identifiants.",
+      "invalid_contract": "Vérifiez le numéro du contrat et son rattachement à ce compte.",
+      "cannot_connect": "Le portail est temporairement inaccessible. Réessayez plus tard.",
+      "unexpected_response": "Le portail a renvoyé une réponse inattendue. Consultez la section dépannage."
+    },
+    "abort": {
+      "already_configured": "Ce contrat est déjà configuré.",
+      "already_in_progress": "La configuration de ce contrat est déjà en cours.",
+      "reauth_successful": "Le compte de la Régie a été reconnecté."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Alerte de consommation",
+        "description": "L’alerte se déclenche si le volume du dernier relevé dépasse ce seuil. Saisissez 0 pour la désactiver.",
+        "data": {
+          "alert_threshold": "Seuil d’alerte (L)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "meter_index": {
+        "name": "Index du compteur"
+      },
+      "last_volume": {
+        "name": "Consommation du dernier relevé"
+      },
+      "last_reading": {
+        "name": "Date du dernier relevé"
+      },
+      "daily_average": {
+        "name": "Moyenne quotidienne"
+      },
+      "month_volume": {
+        "name": "Consommation du mois"
+      },
+      "year_volume": {
+        "name": "Consommation de l’année"
+      }
+    },
+    "binary_sensor": {
+      "portal_status": {
+        "name": "Connexion au portail",
+        "state_attributes": {
+          "last_reading": {
+            "name": "Dernier relevé"
+          },
+          "reading_age_hours": {
+            "name": "Âge du relevé (h)"
+          },
+          "reading_stale": {
+            "name": "Relevé ancien"
+          },
+          "freshness_limit_hours": {
+            "name": "Limite de fraîcheur (h)"
+          },
+          "energy_statistic_id": {
+            "name": "Identifiant de la statistique Énergie"
+          }
+        }
+      },
+      "consumption_alert": {
+        "name": "Consommation élevée",
+        "state_attributes": {
+          "threshold_litres": {
+            "name": "Seuil d’alerte (L)"
+          }
+        }
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Actualiser les relevés"
+      }
+    }
+  }
+}

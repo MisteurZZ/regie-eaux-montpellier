@@ -1,0 +1,31 @@
+{
+  "nbTotalResultats": 4,
+  "resultats": [
+    {
+      "dateReleve": "2026-11-19T12:00:00+01:00",
+      "numeroContratAbonnement": "TEST",
+      "valeurIndex": 484838.0,
+      "volumeConsoEnLitres": 533,
+      "volumeConsoEnM3": 0.533
+    },
+    {
+      "dateReleve": "2026-11-18T12:00:00+01:00",
+      "numeroContratAbonnement": "TEST",
+      "valeurIndex": 484305.0,
+      "volumeConsoEnLitres": 410,
+      "volumeConsoEnM3": 0.410
+    },
+    {
+      "dateReleve": "2026-11-17T12:00:00+01:00",
+      "numeroContratAbonnement": "TEST",
+      "valeurIndex": 483895.0,
+      "volumeConsoEnLitres": 429,
+      "volumeConsoEnM3": 0.429
+    },
+    {
+      "dateReleve": "2026-11-16T18:00:00+01:00",
+      "numeroContratAbonnement": "TEST",
+      "valeurIndex": 483466.0
+    }
+  ]
+}
