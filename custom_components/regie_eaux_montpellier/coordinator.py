@@ -3,25 +3,29 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from collections.abc import Callable
+from datetime import date, datetime, time, timedelta
 from time import monotonic
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.event import async_call_later, async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import InvalidAuth, MontpellierClient, PortalError, TemporaryError
 from .const import CONF_CONTRACT, CONF_COST_ENABLED, CONF_TARIFFS, DOMAIN, NAME
-from .history import Reading, decode_history, encode_history, hourly_totals, merge_readings
+from .history import PARIS, Reading, decode_history, encode_history, hourly_totals, merge_readings
 from .http import PortalTransport
 from .statistics import WaterCostStatistics, WaterStatistics
 from .tariffs import decode_tariffs, estimate_costs
 
 _LOGGER = logging.getLogger(__name__)
 MIN_REFRESH_INTERVAL = 60
+DAILY_REFRESH_TIME = time(5, 15)
 
 
 class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
@@ -35,7 +39,6 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
             _LOGGER,
             name=NAME,
             config_entry=entry,
-            update_interval=timedelta(days=1),
         )
         contract_key = entry.unique_id
         assert contract_key is not None
@@ -53,6 +56,48 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
         self._failures = 0
         self._next_attempt = 0.0
         self._needs_publish = True
+        self._cancel_daily_refresh: Callable[[], None] | None = None
+        self._cancel_retry: Callable[[], None] | None = None
+
+    @callback
+    def async_schedule_daily_refresh(self) -> None:
+        """Schedule the next 05:15 in Paris independently of other refreshes."""
+        now = dt_util.utcnow().astimezone(PARIS)
+        next_refresh = datetime.combine(now.date(), DAILY_REFRESH_TIME, PARIS)
+        if next_refresh <= now:
+            next_refresh += timedelta(days=1)
+        self._cancel_daily_refresh = async_track_point_in_utc_time(
+            self.hass, self._async_daily_refresh, dt_util.as_utc(next_refresh)
+        )
+
+    async def _async_daily_refresh(self, _scheduled_time: datetime) -> None:
+        if self._cancel_daily_refresh is None or self.hass.is_stopping:
+            return
+        self.async_schedule_daily_refresh()
+        if self.config_entry.pref_disable_polling:
+            return
+        if not self.last_update_success and isinstance(self.last_exception, ConfigEntryAuthFailed):
+            return
+        await self.async_manual_refresh()
+
+    async def _async_retry_refresh(self, _now: datetime) -> None:
+        self._cancel_retry = None
+        if (
+            self._cancel_daily_refresh
+            and not self.hass.is_stopping
+            and not self.config_entry.pref_disable_polling
+        ):
+            await self.async_request_refresh()
+
+    async def async_shutdown(self) -> None:
+        """Stop the daily and retry timers when the entry unloads."""
+        if self._cancel_daily_refresh:
+            self._cancel_daily_refresh()
+            self._cancel_daily_refresh = None
+        if self._cancel_retry:
+            self._cancel_retry()
+            self._cancel_retry = None
+        await super().async_shutdown()
 
     @property
     def latest(self) -> Reading | None:
@@ -98,6 +143,9 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
             )
 
         self._next_attempt = monotonic() + MIN_REFRESH_INTERVAL
+        if self._cancel_retry:
+            self._cancel_retry()
+            self._cancel_retry = None
         try:
             returned = await self._client.fetch_readings(self._contract)
         except InvalidAuth as err:
@@ -107,6 +155,10 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
             self._failures = min(self._failures + 1, 4)
             delay = max(900 * 2 ** (self._failures - 1), err.retry_after or 0)
             self._next_attempt = monotonic() + delay
+            if self._cancel_daily_refresh and not self.config_entry.pref_disable_polling:
+                self._cancel_retry = async_call_later(
+                    self.hass, delay, self._async_retry_refresh
+                )
             raise UpdateFailed(str(err), retry_after=delay) from None
         except PortalError as err:
             self._failures = 0

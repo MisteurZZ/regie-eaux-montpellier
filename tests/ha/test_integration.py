@@ -31,6 +31,7 @@ from custom_components.regie_eaux_montpellier.http import PortalTransport
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INPUT = {"username": "test-login", "password": "test-password", CONF_CONTRACT: "TEST"}
+COORDINATOR = "custom_components.regie_eaux_montpellier.coordinator"
 
 
 @pytest.fixture
@@ -128,6 +129,70 @@ async def test_config_flow_entities_and_external_statistics(hass, recorder_mock,
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     assert await recorded_hours(hass, statistic_id) == corrected
+
+
+@pytest.mark.parametrize(
+    ("first_refresh", "next_refresh"),
+    [
+        (
+            datetime(2026, 3, 28, 4, 15, tzinfo=timezone.utc),
+            datetime(2026, 3, 29, 3, 15, tzinfo=timezone.utc),
+        ),
+        (
+            datetime(2026, 10, 24, 3, 15, tzinfo=timezone.utc),
+            datetime(2026, 10, 25, 4, 15, tzinfo=timezone.utc),
+        ),
+    ],
+)
+async def test_daily_refresh_keeps_paris_time_on_dst_changes(
+    hass, recorder_mock, portal, freezer, first_refresh, next_refresh
+):
+    freezer.move_to(first_refresh - timedelta(hours=2))
+    with (
+        patch(f"{COORDINATOR}.async_track_point_in_utc_time") as schedule,
+        patch(f"{COORDINATOR}.monotonic", return_value=0) as clock,
+    ):
+        entry = await add_contract(hass)
+        assert schedule.call_args.args[2] == first_refresh
+        refresh = schedule.call_args.args[1]
+        before = portal["request_count"]
+
+        clock.return_value = 3600
+        await entry.runtime_data.async_manual_refresh()
+        assert portal["request_count"] > before
+        assert schedule.call_count == 1
+
+        freezer.move_to(first_refresh)
+        clock.return_value = 7200
+        with patch.object(entry.runtime_data, "async_manual_refresh", new_callable=AsyncMock) as refresh_now:
+            await refresh(first_refresh)
+            refresh_now.assert_awaited_once()
+        assert schedule.call_args.args[2] == next_refresh
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        schedule.return_value.assert_called_once()
+
+
+async def test_rate_limit_retry_preserves_the_daily_schedule(hass, recorder_mock, portal):
+    with (
+        patch(f"{COORDINATOR}.async_track_point_in_utc_time") as schedule,
+        patch(f"{COORDINATOR}.async_call_later") as schedule_retry,
+        patch(f"{COORDINATOR}.monotonic", return_value=0) as clock,
+    ):
+        entry = await add_contract(hass)
+        daily_refresh = schedule.call_args.args[2]
+        portal["status"] = 429
+        clock.return_value = 3600
+        await entry.runtime_data.async_refresh()
+        assert not entry.runtime_data.last_update_success
+        assert schedule_retry.call_args.args[1] == 1800
+
+        clock.return_value = 5400
+        portal["status"] = 200
+        await schedule_retry.call_args.args[2](dt_util.utcnow())
+        assert entry.runtime_data.last_update_success
+        schedule.assert_called_once()
+        assert schedule.call_args.args[2] == daily_refresh
 
 
 async def test_reauth_preserves_contract_and_entry(hass, recorder_mock, portal):
