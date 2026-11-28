@@ -20,6 +20,7 @@ from .api import InvalidAuth, MontpellierClient, PortalError, TemporaryError
 from .const import CONF_CONTRACT, CONF_COST_ENABLED, CONF_TARIFFS, DOMAIN, NAME
 from .history import PARIS, Reading, decode_history, encode_history, hourly_totals, merge_readings
 from .http import PortalTransport
+from .schedule import next_catch_up, reading_overdue
 from .statistics import WaterCostStatistics, WaterStatistics
 from .tariffs import decode_tariffs, estimate_costs
 
@@ -58,6 +59,7 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
         self._needs_publish = True
         self._cancel_daily_refresh: Callable[[], None] | None = None
         self._cancel_retry: Callable[[], None] | None = None
+        self._cancel_catch_up: Callable[[], None] | None = None
 
     @callback
     def async_schedule_daily_refresh(self) -> None:
@@ -79,6 +81,35 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
         if not self.last_update_success and isinstance(self.last_exception, ConfigEntryAuthFailed):
             return
         await self.async_manual_refresh()
+        self.async_schedule_catch_up()
+
+    @callback
+    def async_schedule_catch_up(self) -> None:
+        """Look again later today when the previous day's reading is still missing."""
+        if self._cancel_catch_up:
+            self._cancel_catch_up()
+            self._cancel_catch_up = None
+        now = dt_util.utcnow()
+        if not reading_overdue(self.latest, now.astimezone(PARIS).date()):
+            return
+        if (slot := next_catch_up(now)) is None:
+            return
+        self._cancel_catch_up = async_call_later(
+            self.hass, (slot - now).total_seconds(), self._async_catch_up_refresh
+        )
+
+    async def _async_catch_up_refresh(self, _now: datetime) -> None:
+        self._cancel_catch_up = None
+        if self._cancel_daily_refresh is None or self.hass.is_stopping:
+            return
+        if self.config_entry.pref_disable_polling:
+            return
+        if not self.last_update_success and isinstance(self.last_exception, ConfigEntryAuthFailed):
+            return
+        if not reading_overdue(self.latest, dt_util.now(PARIS).date()):
+            return
+        await self.async_manual_refresh()
+        self.async_schedule_catch_up()
 
     async def _async_retry_refresh(self, _now: datetime) -> None:
         self._cancel_retry = None
@@ -97,6 +128,9 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
         if self._cancel_retry:
             self._cancel_retry()
             self._cancel_retry = None
+        if self._cancel_catch_up:
+            self._cancel_catch_up()
+            self._cancel_catch_up = None
         await super().async_shutdown()
 
     @property
