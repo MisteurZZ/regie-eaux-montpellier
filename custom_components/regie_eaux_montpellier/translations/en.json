@@ -4,11 +4,11 @@
     "step": {
       "user": {
         "title": "Connect a water subscription",
-        "description": "Enter your customer portal credentials and the contract number shown on your bill.",
+        "description": "Use your online agency credentials. Leave the contract number empty to use your account's default contract, or enter the one printed on your bill.",
         "data": {
           "username": "Username",
           "password": "Password",
-          "contract": "Contract number"
+          "contract": "Contract number (optional)"
         }
       },
       "reauth_confirm": {
@@ -26,7 +26,8 @@
       "cannot_connect": "The portal is temporarily unreachable. Try again later.",
       "unexpected_response": "The portal returned an unexpected response when reading the contract. See the Home Assistant logs.",
       "unexpected_login_response": "The portal returned an unexpected login response. See the Home Assistant logs for the failed step.",
-      "mfa_required": "This account requires a second authentication factor. Use the water portal to access your account."
+      "mfa_required": "This account requires a second authentication factor. Use the water portal to access your account.",
+      "no_default_contract": "The portal reports no default contract for this account. Enter the number printed on your bill."
     },
     "abort": {
       "already_configured": "This contract is already configured.",
