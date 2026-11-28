@@ -8,6 +8,7 @@ from uuid import UUID
 
 from custom_components.regie_eaux_montpellier.api import (
     CONSUMPTION,
+    DEFAULT_CONTRACT,
     GENERATE_TOKEN,
     LOGIN,
     PORTAL_APP,
@@ -267,3 +268,58 @@ class PortalClientTest(IsolatedAsyncioTestCase):
             *bootstrap(), login(), Response(200, {}, {"nbTotalResultats": 0, "resultats": []})
         )
         self.assertEqual(await MontpellierClient(transport, "a", "b").fetch_readings("TEST"), ())
+
+
+def default_contract(number="TEST"):
+    """The relevant part of the portal's default contract response."""
+    return Response(200, {}, {"numeroContrat": number, "isDefautContrat": True})
+
+
+class DefaultContractTest(IsolatedAsyncioTestCase):
+    async def test_reads_the_default_contract_and_reuses_the_session(self):
+        transport = FakeTransport(*bootstrap(), login(), default_contract(" TEST "), readings())
+        client = MontpellierClient(transport, "a", "b")
+        self.assertEqual(await client.fetch_default_contract(), "TEST")
+        await client.fetch_readings("TEST")
+        self.assertEqual(transport.calls[-2][:2], ("GET", DEFAULT_CONTRACT))
+        self.assertEqual(transport.calls[-2][2]["Token"], "session-one")
+        self.assertTrue(transport.calls[-2][2]["ConversationId"].startswith(CONVERSATION_PREFIX))
+        self.assertEqual(sum(call[1] == LOGIN for call in transport.calls), 1)
+
+    async def test_numeric_contract_is_accepted(self):
+        transport = FakeTransport(*bootstrap(), login(), default_contract(1234567))
+        self.assertEqual(await MontpellierClient(transport, "a", "b").fetch_default_contract(), "1234567")
+
+    async def test_expired_session_is_renewed_once(self):
+        transport = FakeTransport(
+            *bootstrap(), login(), Response(401, {}, None),
+            *bootstrap(cached=True, token="openToken-new"), login("new"), default_contract(),
+        )
+        self.assertEqual(await MontpellierClient(transport, "a", "b").fetch_default_contract(), "TEST")
+        self.assertEqual(transport.cookie_tokens, ["session-one", "new"])
+
+    async def test_missing_default_contract(self):
+        for response in (
+            Response(204, {}, None),
+            Response(404, {}, None),
+            Response(200, {}, {}),
+            Response(200, {}, {"numeroContrat": ""}),
+            Response(200, {}, {"numeroContrat": "../other"}),
+            Response(200, {}, {"numeroContrat": True}),
+            Response(200, {}, []),
+        ):
+            with self.subTest(response=response):
+                transport = FakeTransport(*bootstrap(), login(), response)
+                with self.assertRaises(ContractError):
+                    await MontpellierClient(transport, "a", "b").fetch_default_contract()
+
+    async def test_rejected_credentials(self):
+        transport = FakeTransport(*bootstrap(), Response(401, {}, None))
+        with self.assertRaises(InvalidAuth):
+            await MontpellierClient(transport, "a", "b").fetch_default_contract()
+
+    async def test_rate_limit_is_temporary(self):
+        transport = FakeTransport(*bootstrap(), login(), Response(429, {"Retry-After": "60"}, None))
+        with self.assertRaises(TemporaryError) as raised:
+            await MontpellierClient(transport, "a", "b").fetch_default_contract()
+        self.assertEqual(raised.exception.retry_after, 60)

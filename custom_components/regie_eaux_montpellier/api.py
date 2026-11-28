@@ -23,6 +23,8 @@ PORTAL_APP = "/app/app.js"
 GENERATE_TOKEN = "/webapi/Acces/generateToken"
 LOGIN = "/webapi/Utilisateur/authentification"
 CONSUMPTION = "/webapi/Facturation/listeConsommationsFacturees/"
+DEFAULT_CONTRACT = "/webapi/Abonnement/getContratParDefaut/"
+CONTRACT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 class PortalError(Exception):
@@ -277,6 +279,32 @@ class MontpellierClient:
         return await self._transport.request(
             "GET", path, headers={"Token": self._token, "ConversationId": _conversation_id()}
         )
+
+    async def fetch_default_contract(self) -> str:
+        """Return the contract the portal opens by default for this account."""
+        if self._token is None:
+            await self._login()
+
+        response = await self._read(DEFAULT_CONTRACT)
+        initial_status = response.status
+        if initial_status in (401, 403, 410):
+            await self._login()
+            response = await self._read(DEFAULT_CONTRACT)
+        if response.status in (204, 404):
+            raise ContractError("Portal has no default subscription for this account")
+        if response.status in (401, 403, 410):
+            self._token = None
+            raise ProtocolError(
+                f"Portal rejected the renewed session (HTTP {response.status} after HTTP {initial_status})"
+            )
+
+        _check_status(response, step="Default contract request")
+        number = response.body.get("numeroContrat") if isinstance(response.body, dict) else None
+        if isinstance(number, int) and not isinstance(number, bool):
+            number = str(number)
+        if not isinstance(number, str) or not CONTRACT_PATTERN.fullmatch(number := number.strip()):
+            raise ContractError("Portal has no default subscription for this account")
+        return number
 
     async def fetch_readings(self, contract: str) -> tuple[Reading, ...]:
         """Read the supplied subscription under the subscriber's session."""

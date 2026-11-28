@@ -18,7 +18,13 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry
 from homeassistant.util import dt as dt_util
 
-from custom_components.regie_eaux_montpellier.api import GENERATE_TOKEN, LOGIN, PORTAL_APP, Response
+from custom_components.regie_eaux_montpellier.api import (
+    DEFAULT_CONTRACT,
+    GENERATE_TOKEN,
+    LOGIN,
+    PORTAL_APP,
+    Response,
+)
 from custom_components.regie_eaux_montpellier.const import (
     CONF_ALERT_THRESHOLD,
     CONF_CONTRACT,
@@ -41,6 +47,7 @@ def portal():
         "status": 200,
         "request_count": 0,
         "payload": loads((FIXTURES / "readings.json").read_text(encoding="utf-8")),
+        "default_contract": {"numeroContrat": "TEST", "isDefautContrat": True},
     }
     script = (FIXTURES / "portal_app.js").read_text(encoding="utf-8")
 
@@ -62,6 +69,9 @@ def portal():
             if state["status"] == 401:
                 return Response(401, {}, None)
             return Response(200, {}, {"tokenAuthentique": "fixture"})
+        if (method, path) == ("GET", DEFAULT_CONTRACT):
+            assert headers["Token"] == "fixture"
+            return Response(200, {}, state["default_contract"])
         assert method == "GET" and path.endswith("/TEST")
         assert headers["Token"] == "fixture"
         if state["status"] != 200:
@@ -193,6 +203,25 @@ async def test_rate_limit_retry_preserves_the_daily_schedule(hass, recorder_mock
         assert entry.runtime_data.last_update_success
         schedule.assert_called_once()
         assert schedule.call_args.args[2] == daily_refresh
+
+
+async def test_config_flow_uses_the_default_contract(hass, recorder_mock, portal):
+    flow = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    without_contract = {key: value for key, value in INPUT.items() if key != CONF_CONTRACT}
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], without_contract)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CONTRACT] == "TEST"
+    await hass.async_block_till_done()
+
+
+async def test_config_flow_reports_a_missing_default_contract(hass, recorder_mock, portal):
+    portal["default_contract"] = {}
+    flow = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {**INPUT, CONF_CONTRACT: "  "}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "no_default_contract"}
 
 
 async def test_reauth_preserves_contract_and_entry(hass, recorder_mock, portal):

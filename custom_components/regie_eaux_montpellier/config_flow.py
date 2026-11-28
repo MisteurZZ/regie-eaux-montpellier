@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import date, timedelta
 from hashlib import sha256
 from typing import Any
@@ -26,6 +25,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.util import dt as dt_util
 
 from .api import (
+    CONTRACT_PATTERN,
     ContractError,
     InvalidAuth,
     LoginProtocolError,
@@ -59,7 +59,6 @@ from .tariffs import (
 _LOGGER = logging.getLogger(__name__)
 _PRICE_FIELD = "price_per_m3"
 _EFFECTIVE_DATE_FIELD = "tariff_effective_from"
-_CONTRACT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 def _credentials_schema(*, include_contract: bool) -> vol.Schema:
@@ -68,7 +67,8 @@ def _credentials_schema(*, include_contract: bool) -> vol.Schema:
         vol.Required(CONF_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
     }
     if include_contract:
-        fields[vol.Required(CONF_CONTRACT)] = TextSelector()
+        # Left empty, the contract the portal opens by default is used.
+        fields[vol.Optional(CONF_CONTRACT, default="")] = TextSelector()
     return vol.Schema(fields)
 
 
@@ -76,6 +76,29 @@ class WaterConfigFlow(ConfigFlow, domain=DOMAIN):
     """Use one config entry per contract."""
 
     VERSION = 1
+
+    async def _async_default_contract(self, username: str, password: str) -> tuple[str | None, str | None]:
+        """Ask the portal for the account's default contract, as its web app does."""
+        transport = PortalTransport(self.hass)
+        try:
+            contract = await MontpellierClient(transport, username, password).fetch_default_contract()
+        except InvalidAuth:
+            return None, "invalid_auth"
+        except MFARequired:
+            return None, "mfa_required"
+        except ContractError:
+            return None, "no_default_contract"
+        except TemporaryError:
+            return None, "cannot_connect"
+        except LoginProtocolError as err:
+            _LOGGER.warning("Portal login validation failed: %s", err)
+            return None, "unexpected_login_response"
+        except ProtocolError as err:
+            _LOGGER.warning("Portal default contract lookup failed: %s", err)
+            return None, "unexpected_response"
+        finally:
+            transport.close()
+        return contract, None
 
     async def _async_validate(self, data: dict[str, str]) -> str | None:
         transport = PortalTransport(self.hass)
@@ -107,13 +130,19 @@ class WaterConfigFlow(ConfigFlow, domain=DOMAIN):
         """Add the number printed on a water bill."""
         errors = {}
         if user_input is not None:
-            contract = user_input[CONF_CONTRACT].strip()
+            contract = user_input.get(CONF_CONTRACT, "").strip()
             username = user_input[CONF_USERNAME].strip()
-            if not _CONTRACT_PATTERN.fullmatch(contract):
+            if contract and not CONTRACT_PATTERN.fullmatch(contract):
                 errors[CONF_CONTRACT] = "invalid_contract"
             elif not username or not user_input[CONF_PASSWORD]:
                 errors["base"] = "invalid_auth"
-            else:
+            elif not contract:
+                contract, error = await self._async_default_contract(
+                    username, user_input[CONF_PASSWORD]
+                )
+                if error:
+                    errors["base"] = error
+            if not errors:
                 data = {
                     CONF_USERNAME: username,
                     CONF_PASSWORD: user_input[CONF_PASSWORD],

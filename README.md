@@ -9,8 +9,8 @@ Intégration personnalisée pour le portail abonnés de la Régie des eaux de Mo
 1. Décompressez l’archive sur votre ordinateur. À l’aide de votre accès habituel à la configuration de Home Assistant, copiez le dossier `custom_components/regie_eaux_montpellier` dans le dossier `custom_components` de Home Assistant. Créez ce dernier s’il manque. Le fichier manifeste doit se trouver dans `/config/custom_components/regie_eaux_montpellier/manifest.json`.
 2. Redémarrez Home Assistant.
 3. Ouvrez **Paramètres → Appareils et services → Ajouter une intégration**, puis cherchez **Régie des eaux Montpellier**.
-4. Saisissez votre identifiant, votre mot de passe et le numéro de contrat imprimé sur votre facture. Conservez les zéros initiaux. L’intégration valide l’ouverture de session et l’accès aux relevés avant de créer l’appareil.
-5. Si vous avez plusieurs contrats, répétez l’ajout avec chaque numéro. Chaque contrat a son propre appareil, ses réglages et sa source Énergie. La saisie du numéro est manuelle.
+4. Saisissez votre identifiant et votre mot de passe. Laissez le numéro de contrat vide pour utiliser le contrat par défaut de votre compte, comme l’agence en ligne à l’ouverture, ou saisissez celui imprimé sur votre facture en conservant les zéros initiaux. L’intégration valide l’ouverture de session et l’accès aux relevés avant de créer l’appareil.
+5. Si vous avez plusieurs contrats, répétez l’ajout avec chaque numéro. Chaque contrat a son propre appareil, ses réglages et sa source Énergie. Pour un contrat autre que celui par défaut, saisissez son numéro.
 
 ## Installation depuis le Marketplace ou HACS
 

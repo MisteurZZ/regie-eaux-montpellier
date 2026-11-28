@@ -4,11 +4,11 @@
     "step": {
       "user": {
         "title": "Connecter un contrat d’eau",
-        "description": "Utilisez les identifiants de l’agence en ligne et le numéro de contrat indiqué sur votre facture.",
+        "description": "Utilisez les identifiants de l’agence en ligne. Laissez le numéro de contrat vide pour utiliser le contrat par défaut de votre compte, ou saisissez celui indiqué sur votre facture.",
         "data": {
           "username": "Identifiant",
           "password": "Mot de passe",
-          "contract": "Numéro de contrat"
+          "contract": "Numéro de contrat (facultatif)"
         }
       },
       "reauth_confirm": {
@@ -26,7 +26,8 @@
       "cannot_connect": "Le portail est temporairement inaccessible. Réessayez plus tard.",
       "unexpected_response": "Le portail a renvoyé une réponse inattendue pendant la lecture du contrat. Consultez les journaux de Home Assistant.",
       "unexpected_login_response": "La réponse de connexion du portail est inattendue. Consultez les journaux de Home Assistant pour connaître l’étape qui a échoué.",
-      "mfa_required": "Ce compte exige une seconde étape d’authentification. L’accès à ce compte se fait dans l’agence en ligne."
+      "mfa_required": "Ce compte exige une seconde étape d’authentification. L’accès à ce compte se fait dans l’agence en ligne.",
+      "no_default_contract": "Le portail n’indique aucun contrat par défaut pour ce compte. Saisissez le numéro indiqué sur votre facture."
     },
     "abort": {
       "already_configured": "Ce contrat est déjà configuré.",
