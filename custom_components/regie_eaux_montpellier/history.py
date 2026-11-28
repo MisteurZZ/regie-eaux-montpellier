@@ -173,3 +173,23 @@ def hourly_totals(readings: tuple[Reading, ...]) -> list[HourlyTotal]:
         total += by_hour[hour]
         result.append(HourlyTotal(hour, total))
     return result
+
+
+def history_overview(readings: tuple[Reading, ...], now: datetime) -> dict[str, int | None]:
+    """Describe the cached history for diagnostics without dates or volumes."""
+    if not readings:
+        return {
+            "readings": 0,
+            "readings_with_volume": 0,
+            "history_span_days": None,
+            "latest_reading_age_hours": None,
+        }
+    first, latest = readings[0], readings[-1]
+    return {
+        "readings": len(readings),
+        "readings_with_volume": sum(r.volume_litres is not None for r in readings),
+        "history_span_days": (latest.day - first.day).days,
+        "latest_reading_age_hours": max(
+            0, int((now - latest.measured_at).total_seconds() // 3600)
+        ),
+    }
