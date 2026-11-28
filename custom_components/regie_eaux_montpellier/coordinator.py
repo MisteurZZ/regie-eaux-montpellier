@@ -100,6 +100,11 @@ class WaterCoordinator(DataUpdateCoordinator[tuple[Reading, ...]]):
         await super().async_shutdown()
 
     @property
+    def readings(self) -> tuple[Reading, ...]:
+        """Return the cached history, kept across outages and restarts."""
+        return self._readings
+
+    @property
     def latest(self) -> Reading | None:
         """Return the latest cached reading even during an outage."""
         return self._readings[-1] if self._readings else None

@@ -11,6 +11,7 @@ from custom_components.regie_eaux_montpellier.history import (
     InvalidReadings,
     decode_history,
     encode_history,
+    history_overview,
     hourly_totals,
     merge_readings,
     parse_readings,
@@ -143,3 +144,30 @@ class HistoryTest(TestCase):
         ):
             with self.subTest(key=key, value=value), self.assertRaises(InvalidReadings):
                 parse_readings({"resultats": [{**row, key: value}]}, "TEST")
+
+
+class HistoryOverviewTest(TestCase):
+    def test_counts_and_ages_without_dates_or_volumes(self):
+        readings = example()
+        latest = readings[-1].measured_at
+        overview = history_overview(readings, latest + timedelta(hours=17, minutes=59))
+        self.assertEqual(
+            overview,
+            {
+                "readings": 4,
+                "readings_with_volume": 3,
+                "history_span_days": 3,
+                "latest_reading_age_hours": 17,
+            },
+        )
+
+    def test_empty_history(self):
+        overview = history_overview((), datetime(2026, 11, 28, tzinfo=PARIS))
+        self.assertEqual(overview["readings"], 0)
+        self.assertIsNone(overview["history_span_days"])
+        self.assertIsNone(overview["latest_reading_age_hours"])
+
+    def test_age_never_negative(self):
+        readings = example()
+        overview = history_overview(readings, readings[-1].measured_at - timedelta(hours=1))
+        self.assertEqual(overview["latest_reading_age_hours"], 0)
